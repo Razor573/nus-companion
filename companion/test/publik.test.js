@@ -79,7 +79,8 @@ test('an empty balance (402): Publik\'s message, one line, and the one top-up li
   assert.equal(r.kind, 'balance'); assert.equal(r.url, 'https://publikhq.com/wallet?top_up=1');
   const { plainAskError } = require('../src/ask-error');
   const line = plainAskError('publik', e);
-  assert.match(line, /^Not enough publik API balance\. Top up, or switch to your own key in Settings\./);
+  // 0.1.22: the line names publik's free week (card, paid after) before the own-key way out.
+  assert.match(line, /^Not enough publik API balance\. publik gives new subscribers a free week: it needs a card and is paid after the week unless you cancel\. Or switch to your own key in Settings\./);
   assert.match(line, /Voice commands and reminders still work/);
   assert.doesNotMatch(line, /https?:/, 'the link rides on the Top up button, not in the text');
 });

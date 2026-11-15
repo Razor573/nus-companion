@@ -586,6 +586,13 @@ app.whenReady().then(async () => {
     onWin: feature => stats.win(feature),
     onEngaged: () => stats.engaged(),
     onAiReady: p => stats.aiReady(p),
+    // 0.1.22: the error bubble's "Switch to publik" (the person's own key stopped answering).
+    publikSwitch: () => {
+      if (!publik || !publik.canSwitch()) return false;
+      publik.setChoice('publik'); stats.aiSource(publik.choice());
+      send('home:settings', publicSettings());
+      return publik.choice() === 'publik';
+    },
     onHookShown: h => stats.hookShown(h),
     onHookUsed: h => stats.hookUsed(h),
     nudgeGroup: () => stats.nudgeGroup(),

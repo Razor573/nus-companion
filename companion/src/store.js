@@ -125,7 +125,9 @@ const DEFAULTS = {
     anthropic: { fast: 'claude-haiku-4-5', smart: 'claude-sonnet-5' },
     // 2026-09-15: gemini-2.5-* returns 404 "no longer available to new users".
     gemini: { fast: 'gemini-3.6-flash', smart: 'gemini-3.6-pro' },
-    nvidia: { fast: 'meta/llama-3.2-11b-vision-instruct', smart: 'meta/llama-3.2-90b-vision-instruct' }
+    // 2026-11-13 (feedback): Nvidia removed meta/llama-3.2-11b-vision-instruct, so every ask on an
+    // Nvidia key failed. Its model list on 2026-11-15 still has the 90b vision model; both tiers use it.
+    nvidia: { fast: 'meta/llama-3.2-90b-vision-instruct', smart: 'meta/llama-3.2-90b-vision-instruct' }
   }
 };
 
@@ -138,6 +140,9 @@ const RETIRED_MODELS = {
   anthropic: {
     'claude-3-5-haiku-latest': 'claude-haiku-4-5',
     'claude-3-5-sonnet-latest': 'claude-sonnet-5',
+  },
+  nvidia: {
+    'meta/llama-3.2-11b-vision-instruct': 'meta/llama-3.2-90b-vision-instruct',
   },
 };
 

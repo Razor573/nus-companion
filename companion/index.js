@@ -55,7 +55,7 @@ const { buildPageAsk, preparePage } = require('./src/page-read');
 const { screenAsk, vagueAsk, CLARIFY_LINE } = require('./src/guide/screen-ask');
 const { rewriteInPlace } = require('./src/rewrite');
 const { parseReminder, createReminders, whenLabel, durationWords, describeList, panelRows: reminderRows } = require('./src/reminders');
-const { tellText } = require('./src/feedback');
+const { tellText, thanksText } = require('./src/feedback');
 const { HandsAgent, isSwitcher } = require('./src/hands/agent');
 const { createActions, createFileSearch, createBrowserLaunch, createDefaultBrowser } = require('./src/hands/actions');
 const handsConsent = require('./src/hands/consent');
@@ -990,6 +990,29 @@ function tellIntercept(text, explicit) {
     [{ id: 'fb-send', label: 'Send', primary: true }, { id: 'dismiss', label: 'Cancel' }]);
   return true;
 }
+// The thank-you for the people who use Nūs most (0.1.22, feedback.js THANKS_AT): once, from the
+// count of asks kept on this computer. In a build with publik it also names publik's free week,
+// as publik's offer to new subscribers with its card and its charge, and not for someone who
+// already has a publik plan. The button opens publik's own page for it.
+let freeWeekUrl = '';
+async function thanksCard() {
+  const fb = hooks.feedback;
+  const asks = fb.status().asks;
+  let week = false;
+  try {
+    const p = require('./src/publik');
+    if (p.on()) {
+      const c = p.module.readCredential();
+      const r = c ? await p.module.readWallet(c.key).catch(() => null) : null;
+      const w = r && r.wallet;
+      week = !!w && !(w.plan && w.plan.kind === 'plan');
+      freeWeekUrl = w && /^https:\/\//.test(String(w.top_up_url || '')) ? String(w.top_up_url) : '';
+      if (!freeWeekUrl) week = false;
+    }
+  } catch (_) { week = false; }
+  feedbackBubble('from Pranav', thanksText(asks, { freeWeek: week }),
+    week ? [{ id: 'fb-week', label: 'See the free week', primary: true }, { id: 'dismiss', label: 'OK' }] : [{ id: 'dismiss', label: 'OK', primary: true }]);
+}
 // Right after the person closed an answer with OK: is a prompt due?
 function maybeAskFeedback(reason) {
   if (!hooks.feedback || reason !== 'dismiss' || Date.now() - lastAskAt > 5 * 60000) return;
@@ -1003,6 +1026,8 @@ function maybeAskFeedback(reason) {
     if (which === 'checkin') {
       feedbackBubble('from Pranav', 'You have had Nūs for a few days. What is the one thing it should do better? Pranav reads every note.',
         [{ id: 'fb-tell', label: 'Tell him', primary: true }, { id: 'fb-good', label: 'It is good' }, { id: 'dismiss', label: 'Not now' }]);
+    } else if (which === 'thanks') {
+      thanksCard().catch((e) => console.log('[feedback] thanks card: ' + e.message));
     } else {
       feedbackBubble('quick one', 'Was that answer useful? One tap, and it goes straight to Pranav, who builds Nūs.',
         [{ id: 'fb-up', label: 'Yes', primary: true }, { id: 'fb-down', label: 'Not really' }, { id: 'fb-never', label: 'Do not ask again' }]);
@@ -1017,6 +1042,23 @@ function publikTopUpAction(e) {
   if (!r || r.kind !== 'balance' || !r.url || !/^https:\/\//.test(r.url)) return [];
   publikTopUp = r.url;
   return [{ id: 'publik-topup', label: 'Top up' }];
+}
+// The person's own key or Claude Code is what failed (quota, credit, refused, nothing set up) and
+// this computer is signed in with publik: one button moves the answers to publik (0.1.22).
+function publikSwitchAction(provider, e) {
+  try {
+    if (!require('./src/publik').canSwitch()) return [];
+    return require('./src/ask-error').ownKeyStuck(provider, e) ? [{ id: 'publik-switch', label: 'Switch to publik' }] : [];
+  } catch (_) { return []; }
+}
+function publikSwitch() {
+  let ok = false;
+  try {
+    if (hooks.publikSwitch) ok = hooks.publikSwitch() === true;
+    else { const p = require('./src/publik'); if (p.canSwitch()) { p.setChoice('publik'); ok = p.choice() === 'publik'; } }
+  } catch (e) { console.log('[publik] switch failed: ' + e.message); }
+  routeLog('publik: switch from an error bubble, ' + (ok ? 'done' : 'not done'));
+  flash(ok ? 'Switched to publik. Ask again.' : 'I could not switch. Open Settings, Keys to change who answers.', 4500);
 }
 function feedbackAction(id) {
   const fb = hooks.feedback;
@@ -1034,6 +1076,7 @@ function feedbackAction(id) {
   else if (id === 'fb-never') { fb.never(); flash('Got it. No more questions.', 3000); }
   else if (id === 'fb-tell') openTell();
   else if (id === 'fb-good') { fb.checkinGood().catch(() => {}); thanks(); }
+  else if (id === 'fb-week') { if (freeWeekUrl) shell.openExternal(freeWeekUrl).catch(() => {}); fb.thanksOpened().catch(() => {}); }
   else if (id === 'fb-error') { const line = lastFailure; lastFailure = ''; if (line) fb.submit({ message: 'Could not answer: ' + line, collector: 'error', kind: 'bug', mode: 'text' }).then(r => flash(r && r.delivered ? 'Sent to Pranav. Thank you.' : 'Saved. It goes to Pranav as soon as Nūs can reach him.', 3500)).catch(() => {}); }
   else if (id === 'fb-send' && pendingTell) { const t = pendingTell; pendingTell = ''; sendTell(t, 'tell'); }
 }
@@ -1759,6 +1802,7 @@ function registerIpc() {
     if (p && p.action === 'notnow' && activeNudge) { endNudge('notnow'); return; }
     if (p && p.action === 'walk' && selection) { walkFromSelection(); return; }
     if (p && p.action === 'publik-topup') { if (publikTopUp) shell.openExternal(publikTopUp).catch(() => {}); return; }
+    if (p && p.action === 'publik-switch') { publikSwitch(); return; }
     if (p && p.action && /^fb-/.test(String(p.action))) { feedbackAction(String(p.action)); return; }
     if (p && p.action && /^nt-/.test(String(p.action))) { channelAction(String(p.action)); return; }
     if (p && p.action && /^rt-/.test(String(p.action))) { retentionAction(String(p.action)); return; }
@@ -3292,6 +3336,7 @@ function getGuide() {
     hashCapture,
     selfPid: process.pid,
     log: (m) => console.log('[guide]', m),
+    failActions: (provider, err) => publikSwitchAction(provider, err),
     // Keep = explicit consent: the session summary goes to the outbox the
     // desktop already ingests, whatever the reportToNus default says.
     onKeep: (record) => {
@@ -4518,7 +4563,7 @@ async function answerPlain(text, source, heardAt, opts = {}) {
     // The raw text goes to the log and to "Tell Pranav"; the bubble says what to do.
     lastFailure = String(e.message || e).slice(0, 160);
     console.log('[answer] ' + (llm && llm.provider || '') + ' failed: ' + String(e.message || e).slice(0, 400));
-    send('guide:bubble', { text: plainAskError(llm && llm.provider, e), anchor: 'knot', task: 'ask', kind: 'error', actions: [{ id: 'dismiss', label: 'OK', primary: true }, ...publikTopUpAction(e), ...(hooks.feedback ? [{ id: 'fb-error', label: 'Tell Pranav' }] : [])], sessionId: null });
+    send('guide:bubble', { text: plainAskError(llm && llm.provider, e), anchor: 'knot', task: 'ask', kind: 'error', actions: [{ id: 'dismiss', label: 'OK', primary: true }, ...publikTopUpAction(e), ...publikSwitchAction(llm && llm.provider, e), ...(hooks.feedback ? [{ id: 'fb-error', label: 'Tell Pranav' }] : [])], sessionId: null });
   } finally {
     state.busy = false;
     restoreKnotState();
@@ -4780,7 +4825,7 @@ async function answerFile(text) {
   const q = String(text || '').trim();
   if (!ctx || !q) return;
   const llm = guideLlm();
-  if (!llm || !llm.ready) { send('guide:bubble', { text: NO_KEY_COPY, anchor: 'knot', task: 'ask', kicker: 'no AI yet', kind: 'error', actions: [{ id: 'settings', label: 'Open Settings', primary: true }, { id: 'dismiss', label: 'OK' }] }); noteNoProvider('text', 'chat'); return; }
+  if (!llm || !llm.ready) { send('guide:bubble', { text: NO_KEY_COPY, anchor: 'knot', task: 'ask', kicker: 'no AI yet', kind: 'error', actions: [{ id: 'settings', label: 'Open Settings', primary: true }, ...publikSwitchAction('', NO_KEY_COPY), { id: 'dismiss', label: 'OK' }] }); noteNoProvider('text', 'chat'); return; }
   if (state.busy) { send('llm:busy', {}); return; }
   state.busy = true; notifyDesktopState();
   send('guide:state', { state: 'thinking', task: 'ask' });
@@ -4879,7 +4924,7 @@ async function answerSelection(text) {
   if (!sel || !q) return;
   sel.question = q;
   const llm = guideLlm();
-  if (!llm || !llm.ready) { send('guide:bubble', { text: NO_KEY_COPY, anchor: 'tip', task: 'ask', kicker: 'no AI yet', kind: 'error', actions: [{ id: 'settings', label: 'Open Settings', primary: true }, { id: 'dismiss', label: 'OK' }] }); noteNoProvider('text', 'chat'); return; }
+  if (!llm || !llm.ready) { send('guide:bubble', { text: NO_KEY_COPY, anchor: 'tip', task: 'ask', kicker: 'no AI yet', kind: 'error', actions: [{ id: 'settings', label: 'Open Settings', primary: true }, ...publikSwitchAction('', NO_KEY_COPY), { id: 'dismiss', label: 'OK' }] }); noteNoProvider('text', 'chat'); return; }
   state.busy = true; notifyDesktopState();
   send('guide:state', { state: 'reading', task: 'ask' });
   noteAsk('text', 'chat');

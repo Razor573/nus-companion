@@ -20,6 +20,9 @@ function choice() { const c = mod.readCredential(); return (c && c.choice) || nu
 function active() { return on() && mod.resolveProvider(null).kind === 'publik'; }
 function provider() { const p = mod.resolveProvider(null); return p.kind === 'publik' ? { baseURL: p.baseURL, apiKey: p.apiKey } : null; }
 function setChoice(c) { mod.setChoice(c === 'publik' || c === 'own_key' ? c : null); }
+// Signed in with publik on this computer, and answering with an own key or Claude Code: the
+// person can move to publik in one tap when that key stops working (0.1.22).
+function canSwitch() { return on() && !process.env.PUBLIK_API_KEY && !!mod.readCredential() && choice() !== 'publik'; }
 
 // Which tier answers. Everyday asks and the Smart switch; a vendor model name is never sent.
 const TIERS = { fast: mod.MODELS.fast, smart: mod.MODELS.smart, hands: mod.MODELS.balanced };
@@ -54,14 +57,16 @@ function readError(e) {
   if (e.name === 'APIConnectionError' || /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|Connection error/i.test(text)) return { kind: 'offline', message: '', url: null };
   return { kind: '', message: '', url: null };
 }
-// The words in the Knot's bubble. A 402 shows Publik's own message, our one line, and (as the
-// bubble's button) Publik's one top-up link.
+// The words in the Knot's bubble. A 402 shows Publik's own message, our lines, and (as the
+// bubble's button) Publik's one top-up link. From 0.1.22 our lines name publik's free week, with
+// its card and its charge (pricing page, read 2026-11-15), and never an amount of money.
+const FREE_WEEK_402 = 'publik gives new subscribers a free week: it needs a card and is paid after the week unless you cancel.';
 function errorLine(e) {
   const r = readError(e);
-  if (r.kind === 'balance') return (r.message ? r.message.replace(/\s*$/, '') + ' ' : '') + 'Top up, or switch to your own key in Settings. Voice commands and reminders still work.';
+  if (r.kind === 'balance') return (r.message ? r.message.replace(/\s*$/, '') + ' ' : '') + FREE_WEEK_402 + ' Or switch to your own key in Settings. Voice commands and reminders still work.';
   if (r.kind === 'signed_out') return 'publik signed this computer out. Restart Nūs to sign in again, or switch to your own key in Settings.';
   if (r.kind === 'offline') return 'publik is not reachable. Check your connection. Voice commands and reminders still work.';
   return '';
 }
 
-module.exports = { on, active, choice, provider, setChoice, model, TIERS, prepareImage, readError, errorLine, MAX_IMAGE_CHARS, module: mod };
+module.exports = { on, active, choice, provider, setChoice, canSwitch, model, TIERS, prepareImage, readError, errorLine, FREE_WEEK_402, MAX_IMAGE_CHARS, module: mod };

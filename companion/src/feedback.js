@@ -30,6 +30,10 @@ const TIMEOUT_MS = 6000;
 const DAY_MS = 86400000;
 const REACTION_AT = [1, 5, 25];
 const CHECKIN_AFTER_DAYS = 3;
+// The thank-you (0.1.22): once, when this computer has asked this many times. The install ledger of
+// 2026-11-11 puts the 99th percentile of lifetime asks at 47 to 62, so "among the people who use
+// Nūs the most" is true from here. The count never leaves the computer for this.
+const THANKS_AT = 50;
 const OUTBOX_MAX = 50;
 const OUTBOX_MAX_AGE_MS = 30 * DAY_MS;
 const MESSAGE_MAX = 3000;
@@ -54,6 +58,15 @@ const REST = '(?:\\s+that)?(?:[\\s,:.\\-]+(.*))?$';
 const TELL_RE = new RegExp(LEAD + '(?:(?:tell|message)\\s+' + NAME + '|let\\s+' + NAME + '\\s+know)' + REST, 'i');
 const SEND_RE = new RegExp(LEAD + '(?:send|give|leave)\\s+(?:some\\s+)?feedback\\s+(?:to|for)\\s+(?:' + NAME.slice(3, -1) + '|nus|nūs)' + REST, 'i');
 const COLON_RE = /^feedback\s*:\s*(.*)$/i;
+
+// Pure: the thank-you's words. The free week is publik's own offer to every new subscriber, so it
+// is said as that, with its card and its charge; it is never called a gift from Nūs.
+const THANKS_WEEK = 'If you ever want more than the free asks, publik gives new subscribers a free week. It needs a card, and it is paid after the week unless you cancel.';
+function thanksText(asks, { freeWeek = false } = {}) {
+  const n = Math.max(THANKS_AT, Math.floor(Number(asks) || 0));
+  return 'You have asked Nūs ' + n + ' times on this computer. That puts you among the people who use it the most. I build Nūs by myself, and I wanted to say thank you.'
+    + (freeWeek ? '\n\n' + THANKS_WEEK : '');
+}
 function tellText(text) {
   const t = String(text || '').trim().replace(/\s+/g, ' ');
   if (!t) return null;
@@ -172,6 +185,7 @@ function createFeedback(o) {
     const today = utcDay(now());
     if (s.lastPromptDay === today) return null;
     if (!s.checkinDone && now() - s.firstSeen >= CHECKIN_AFTER_DAYS * DAY_MS) return 'checkin';
+    if (!s.thanksDone && (Number(s.asks) || 0) >= THANKS_AT) return 'thanks';
     const asked = Array.isArray(s.reactionsAt) ? s.reactionsAt : [];
     const next = REACTION_AT.find(n => !asked.includes(n));
     if (next && (Number(s.asks) || 0) >= next) return 'reaction';
@@ -182,6 +196,7 @@ function createFeedback(o) {
     const s = st();
     const patch = { lastPromptDay: utcDay(now()) };
     if (which === 'checkin') patch.checkinDone = true;
+    if (which === 'thanks') patch.thanksDone = true;
     if (which === 'reaction') {
       const asked = Array.isArray(s.reactionsAt) ? s.reactionsAt : [];
       const next = REACTION_AT.find(n => !asked.includes(n));
@@ -199,11 +214,13 @@ function createFeedback(o) {
     return submit({ message, collector: 'reaction', rating: rating === 'up' ? 'up' : 'down', reason: REASONS[reason] ? reason : undefined, mode: s.lastMode });
   }
   function checkinGood() { return submit({ message: 'Day-3 check-in: it is good', collector: 'checkin', rating: 'up' }); }
+  // The thank-you's button was pressed: fixed words, so the count of people who looked is known.
+  function thanksOpened() { return submit({ message: 'Thank-you card: opened the free week', collector: 'thanks' }); }
   function tell(message, collector) { return submit({ message, collector: collector || 'tell', mode: st().lastMode }); }
 
   function status() { const s = st(); return { asks: Number(s.asks) || 0, never: !!s.never, waiting: outbox().length, due: due() }; }
 
-  return { submit, flush, noteAsk, due, shown, never, reaction, checkinGood, tell, status, canSend };
+  return { submit, flush, noteAsk, due, shown, never, reaction, checkinGood, thanksOpened, tell, status, canSend };
 }
 
-module.exports = { createFeedback, tellText, FEEDBACK_URL, REACTION_AT, CHECKIN_AFTER_DAYS, REASONS };
+module.exports = { createFeedback, tellText, thanksText, FEEDBACK_URL, REACTION_AT, CHECKIN_AFTER_DAYS, THANKS_AT, THANKS_WEEK, REASONS };

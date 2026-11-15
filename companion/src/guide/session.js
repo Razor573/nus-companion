@@ -404,7 +404,7 @@ class GuideSession {
 
     // The model: exactly the request it has always been sent.
     const llm = this.d.llm();
-    if (!llm || !llm.ready) { this.explain('No AI is set up yet, so I cannot guide you. Add a free Gemini key or an Anthropic key under Settings > Keys, or sign in to Claude Code. The checklist there tests each one.', { fail: true }); return; }
+    if (!llm || !llm.ready) { this.explain('No AI is set up yet, so I cannot guide you. Add a free Gemini key or an Anthropic key under Settings > Keys, or sign in to Claude Code. The checklist there tests each one.', { fail: true, provider: '', err: 'No AI is set up' }); return; }
     T.provider = llm.provider || '';
     const req = buildPointRequest({ task: s.task, history: s.steps, window: s.app || { title: '(no app in front)', process: '' }, elements, hint: hint || null, plan: this.planInline(), previous: s.steps.length ? null : this.previousFor(s.task) });
     const ctx = { gen, epoch, stepIndex, fg, cap, originPhys, elements, probe, provider: T.provider };
@@ -474,7 +474,7 @@ class GuideSession {
     if (prov) this.retract();
     // Nothing to click for what was really a question: answer it from the same screenshot.
     if (outcome.kind === 'answer') { this.d.log('pointing gave way to an answer (' + outcome.why + ')'); await this.answerScreen(gen, { fg, cap, why: outcome.why }); return; }
-    if (outcome.kind === 'finish') this.finish(outcome.text); else this.explain(outcome.text, { fail: outcome.why === 'fail' });
+    if (outcome.kind === 'finish') this.finish(outcome.text); else this.explain(outcome.text, { fail: outcome.why === 'fail', provider: outcome.provider, err: outcome.err });
   }
 
   // One screenshot, one question, answered in words (src/guide/screen-answer.js).
@@ -503,7 +503,7 @@ class GuideSession {
     if (fg) s.app = { title: fg.title || '', process: fg.process || '', hwnd: fg.hwnd };
     if (!cap || !cap.dataUrl) { this.explain('I could not read the screen. On Windows, allow screen capture for Nūs and try again.'); return; }
     const llm = this.d.llm();
-    if (!llm || !llm.ready) { this.explain('No AI is set up yet, so I cannot answer. Open Settings to sign in or add a key.', { fail: true }); return; }
+    if (!llm || !llm.ready) { this.explain('No AI is set up yet, so I cannot answer. Open Settings to sign in or add a key.', { fail: true, provider: '', err: 'No AI is set up' }); return; }
     T.provider = llm.provider || '';
     const req = buildScreenAnswer({ ask: s.task, mode: s.answer || 'ask', window: s.app || {} });
     this.d.log('answer from the screen (' + (s.answer || 'ask') + (have.why ? ', pointer: ' + have.why : '') + ')');
@@ -522,7 +522,7 @@ class GuideSession {
     } catch (e) { err = e; } finally { this.modelsInFlight -= 1; }
     if (gen !== this.gen || s.epoch !== epoch) return;
     T.model = now() - t0;
-    if (err) { this.d.log('answer failed: ' + err.message); this.explain(plainAskError(T.provider, err), { fail: true }); return; }
+    if (err) { this.d.log('answer failed: ' + err.message); this.explain(plainAskError(T.provider, err), { fail: true, provider: T.provider, err }); return; }
     // A brain that does not stream hands the whole reply back at the end.
     if (!streamed && raw) rs.feed(String(raw));
     for (const ev of rs.end()) speak(ev);
@@ -539,7 +539,7 @@ class GuideSession {
     if (m.err) {
       this.d.log('model failed: ' + m.err.message);
       // Provider errors read as a wall of JSON otherwise (src/ask-error.js).
-      return { kind: 'explain', why: 'fail', text: plainAskError(ctx.provider, m.err) };
+      return { kind: 'explain', why: 'fail', text: plainAskError(ctx.provider, m.err), provider: ctx.provider, err: m.err };
     }
     const modelMs = m.ms;
     const parsed = parsePointReply(m.raw);
@@ -804,7 +804,10 @@ class GuideSession {
     this.stopWatch();
     this.logTiming(opts.end || 'explain');
     this.setState('explaining');
-    const actions = opts.fail ? [{ id: 'settings', label: 'Open Settings', primary: true }, { id: 'dismiss', label: 'OK' }] : [{ id: 'dismiss', label: 'OK' }];
+    // A failed answer whose cause is the person's own key: the host may add one button (Switch to publik).
+    let extra = [];
+    if (opts.fail && opts.err && typeof this.d.failActions === 'function') { try { extra = this.d.failActions(opts.provider, opts.err) || []; } catch (_) { extra = []; } }
+    const actions = opts.fail ? [{ id: 'settings', label: 'Open Settings', primary: true }, ...extra, { id: 'dismiss', label: 'OK' }] : [{ id: 'dismiss', label: 'OK' }];
     this.d.send('guide:bubble', { text, anchor: 'knot', task: 'ask', kind: opts.fail ? 'error' : '', kicker: opts.fail ? 'could not answer' : (opts.kicker || ''), actions, sessionId: s ? s.id : null, speak: s && s.source === 'voice' && !this.saidThisStep() ? text : undefined });
     this.clearExplain();
     // An answer stays up long enough to read (opts.ms); a step's note does not.

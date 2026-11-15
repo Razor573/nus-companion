@@ -50,7 +50,7 @@ test('a new account with the free $0.05: You\'re in, about 100 asks, Connect lea
   const v = G.view(screen);
   assert.equal(v.state, 'in'); assert.equal(v.headline, 'You\'re in'); assert.equal(v.step, 3);
   assert.equal(v.title, 'Connect your plan', 'Publik\'s title stays'); assert.equal(v.footnote, 'Signed in as @newperson.');
-  assert.equal(v.line, '$0.05 free, about 100 asks. Nothing to buy.');
+  assert.equal(v.line, 'About 100 asks for free. Nothing to buy.');
   const [connect, own] = v.buttons;
   assert.equal(connect.label, 'Connect your plan'); assert.equal(connect.primary, true); assert.match(connect.caption, /^Free\./);
   assert.equal(own.label, 'Use my own key'); assert.equal(own.small, true); assert.equal(own.primary, false);
@@ -60,18 +60,41 @@ test('a new account with the free $0.05: You\'re in, about 100 asks, Connect lea
 
 test('a bigger balance and a plan read as what they are, never as free', () => {
   const big = G.view(mod.gateScreen('choose', wallet({ balance_micros: 1_000_050_000 })));
-  assert.equal(big.line, '$1000.05 on your publik balance, plenty of asks.'); assert.doesNotMatch(big.buttons[0].caption, /free/i);
+  assert.equal(big.line, 'Plenty of asks on your publik balance.'); assert.doesNotMatch(big.buttons[0].caption, /free/i);
   const plan = G.view(mod.gateScreen('choose', wallet({ plan: { kind: 'plan', label: 'Basic' } })));
   assert.equal(plan.state, 'in'); assert.equal(plan.line, 'Your publik plan (Basic) answers in Nūs.');
 });
 
-test('no balance left: honest, the own key leads, the paid button says it is paid', () => {
+test('no amount of money is ever drawn, on any screen of the window (0.1.22, publik\'s rule)', () => {
+  const screens = [mod.gateScreen('sign_in', wallet({})), mod.gateScreen('sign_in', wallet({}), 'Waiting for you to sign in in your browser.'),
+    mod.gateScreen('choose', wallet({ balance_micros: 50000 })), mod.gateScreen('choose', wallet({ balance_micros: 1_000_050_000 })),
+    mod.gateScreen('choose', wallet({ balance_micros: 7_300_000 })), mod.gateScreen('choose', wallet({ plan: { kind: 'plan', label: 'Basic' } })), mod.gateScreen('choose', wallet({}))];
+  for (const s of screens) {
+    const v = G.view(s);
+    const ours = [...v.nus, v.footnote, v.privacy, ...v.buttons.map((b) => b.caption)].join(' ');
+    assert.doesNotMatch(ours, /\$\s?\d|\d\s?(dollars|cents)\b/i, v.state + ': ' + ours);
+  }
+});
+
+test('publik\'s newer plan words, with no amount in them, still read as ready and promise no number', () => {
+  const body = 'You are signed in as @newperson. You have publik use ready. Connect it to use AI in this app, or use your own key.';
+  assert.deepEqual(G.readPlan({ body }), { kind: 'balance', usd: null, plan: '' });
+  const v = G.view({ id: 'choose', title: 'Connect your plan', body, note: null, buttons: [{ action: 'connect', label: 'Connect your plan' }, { action: 'own_key', label: 'Use my own key' }] });
+  assert.equal(v.state, 'in'); assert.equal(v.line, 'Your publik account is ready to answer in Nūs.');
+  assert.doesNotMatch(v.line, /\d/); assert.equal(v.buttons[0].caption, 'Starts Nūs.');
+});
+
+test('no balance left: honest, the own key leads, and the plan button is publik\'s free week with its card and charge said', () => {
   const screen = mod.gateScreen('choose', wallet({}));
   assert.equal(screen.title, 'Choose how to pay for AI');
   const v = G.view(screen);
   assert.equal(v.state, 'no_balance'); assert.equal(v.line, G.NO_BALANCE_LINE);
   assert.deepEqual(v.buttons.map((b) => b.label), ['Use my own key', 'Get a plan']);
-  assert.equal(v.buttons[0].primary, true); assert.equal(v.buttons[1].caption, 'Paid');
+  assert.equal(v.buttons[0].primary, true); assert.equal(v.buttons[1].caption, G.FREE_WEEK_CAPTION);
+  assert.equal(v.callout, G.FREE_WEEK_LINE);
+  // The week is free, and the words say what it costs to take it: a card now, a charge after.
+  assert.match(v.callout, /free week/); assert.match(v.callout, /needs a card/); assert.match(v.callout, /paid after the week unless you cancel/);
+  assert.match(v.buttons[1].caption, /then paid/);
 });
 
 test('publik not reachable: its own sentence is the line, Retry the button', () => {

@@ -20,6 +20,8 @@ const QUIET_RETRY_MS = 60_000, QUIET_STEP_MS = 5_000;
 // Measured 2026-11-11 (conditor/publik-setup/README.md): a screen ask on publik-fast costs about
 // $0.00043, so the free $0.05 is about 117 screen asks. Plain asks cost less. A guess for any
 // other balance, rounded down so the window never promises more than it gives.
+// From 0.1.22 the window never shows an amount of money (publik's rule, developers page read
+// 2026-11-15): the balance is only ever said as a number of asks.
 const SCREEN_ASK_USD = 0.00043;
 const FREE_START_USD = 0.05;
 
@@ -42,6 +44,10 @@ const UPDATING = 'Updating? Everything you set up is still here. To keep your ow
 const WAITING = { headline: 'Finish in your browser', line: 'Nūs comes back by itself once you\'re signed in.', callout: 'publik will show you a plan. You do not need to buy it.' };
 const CHOICE_LINE = 'With publik, your question and a picture of your screen go to publik\'s AI to answer. With your own key they go to your AI company, as before. Voice commands, reminders and your notes stay on this computer either way.';
 const NO_BALANCE_LINE = 'This publik account\'s free asks are used up.';
+// publik's own offer (pricing page, read 2026-11-15): a 7-day free trial of its Basic plan for new
+// subscribers, with a card, paid when the week ends. Said in full so nobody is surprised by a charge.
+const FREE_WEEK_LINE = 'publik gives new subscribers a free week. It needs a card, and it is paid after the week unless you cancel.';
+const FREE_WEEK_CAPTION = 'Free week, then paid';
 // Kept for anything that still reads them.
 const INTRO = WORDING[WORDING_PICK].line;
 const WAITING_LINES = [WAITING.headline, WAITING.line, WAITING.callout];
@@ -56,12 +62,15 @@ function statScreen(screen) {
 }
 
 // Pure: what the module's own words on the plan screen say. -> { kind: 'balance'|'plan'|'none', usd, plan }
+// usd is null when the module does not say the amount (publik's module from 2026-11 says only
+// "You have publik use ready."); the window then promises no number of asks.
 function readPlan(screen) {
   const body = String((screen && screen.body) || '');
   const plan = /Your plan: ([^.]*)\./.exec(body);
   if (plan) return { kind: 'plan', usd: 0, plan: plan[1] };
   const bal = /Your balance: \$([0-9]+(?:\.[0-9]+)?)\./.exec(body);
   if (bal) return { kind: Number(bal[1]) > 0 ? 'balance' : 'none', usd: Number(bal[1]), plan: '' };
+  if (/You have publik use ready\./.test(body)) return { kind: 'balance', usd: null, plan: '' };
   return { kind: 'none', usd: 0, plan: '' };
 }
 
@@ -74,8 +83,6 @@ function asksFor(usd) {
   const step = n >= 100 ? 50 : 10;
   return 'about ' + Math.floor(n / step) * step + ' asks';
 }
-
-const dollars = (usd) => '$' + usd.toFixed(2);
 
 // Pure: what the window shows for one of the module's screens. Exported for tests.
 // -> { state, title, windowTitle, headline, line, callout, steps, step, small, updating, footnote, note, privacy, nus, buttons }
@@ -106,11 +113,12 @@ function view(screen, opts = {}) {
     out.windowTitle = 'Nūs: you\'re in';
     if (p.kind === 'none') {
       out.state = 'no_balance';
-      put({ headline: 'You\'re in', line: NO_BALANCE_LINE, small: '' });
-      // No free use left: the own key is the free path, so it leads, and the paid one says so.
+      put({ headline: 'You\'re in', line: NO_BALANCE_LINE, callout: FREE_WEEK_LINE, small: '' });
+      // No free use left: the own key is the free path, so it leads. The plan button says what
+      // publik's free week is; the callout above it names the card and the charge.
       for (const b of out.buttons) {
         if (b.action === 'own_key') { b.primary = true; b.caption = 'A free Gemini key works'; }
-        if (b.action === 'get_plan') { b.primary = false; b.caption = 'Paid'; }
+        if (b.action === 'get_plan') { b.primary = false; b.caption = FREE_WEEK_CAPTION; }
       }
       out.buttons.sort((a, b) => Number(b.primary) - Number(a.primary));
     } else {
@@ -118,11 +126,13 @@ function view(screen, opts = {}) {
       const who = /You are signed in as (@[^.\s]+)\./.exec(String(screen.body || ''));
       out.footnote = who ? 'Signed in as ' + who[1] + '.' : '';
       out.steps = STEPS.slice(); out.step = 3;
-      const asks = asksFor(p.usd), free = p.usd <= FREE_START_USD + 1e-9;
+      // Never an amount of money: the balance is said as asks, or not at all when it is unknown.
+      const known = p.usd !== null, asks = known ? asksFor(p.usd) : '', free = known && p.usd <= FREE_START_USD + 1e-9;
+      const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
       put({ headline: 'You\'re in', small: '',
         line: p.kind === 'plan' ? 'Your publik plan (' + p.plan + ') answers in Nūs.'
-          : free ? dollars(p.usd) + ' free' + (asks ? ', ' + asks : '') + '. Nothing to buy.'
-          : dollars(p.usd) + ' on your publik balance' + (asks ? ', ' + asks : '') + '.' });
+          : free ? (asks ? cap(asks) + ' for free' : 'Free to start') + '. Nothing to buy.'
+          : asks ? cap(asks) + ' on your publik balance.' : 'Your publik account is ready to answer in Nūs.' });
       for (const b of out.buttons) {
         if (b.action === 'connect') { b.primary = true; b.caption = p.kind === 'plan' ? 'Uses your plan. Starts Nūs.' : free ? 'Free. Starts Nūs.' : 'Starts Nūs.'; }
         if (b.action === 'own_key') { b.primary = false; b.small = true; }
@@ -221,4 +231,4 @@ function createGateUI(opts = {}) {
   };
 }
 
-module.exports = { createGateUI, view, statScreen, readPlan, asksFor, comesForward, WORDING, WORDING_PICK, PLAN_LINE, STEPS, INTRO, UPDATING, WAITING, CHOICE_LINE, NO_BALANCE_LINE, WAITING_LINES, NO_BALANCE_LINES };
+module.exports = { createGateUI, view, statScreen, readPlan, asksFor, comesForward, WORDING, WORDING_PICK, PLAN_LINE, STEPS, INTRO, UPDATING, WAITING, CHOICE_LINE, NO_BALANCE_LINE, FREE_WEEK_LINE, FREE_WEEK_CAPTION, WAITING_LINES, NO_BALANCE_LINES };

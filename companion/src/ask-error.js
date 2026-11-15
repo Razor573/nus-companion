@@ -68,4 +68,26 @@ function plainAskError(provider, raw) {
   return 'Something went wrong getting an answer from ' + who + '. Ask again, and if it keeps happening, tell Pranav from the Feedback button.';
 }
 
-module.exports = { plainAskError, providerName };
+// Pure: the person's own key or Claude Code is the reason this ask failed, and asking again will
+// not fix it soon (quota used up, no credit, key refused, model gone, signed out, nothing set up).
+// Feedback 2026-11-08 to 11-14: all nine error reports were this, five of them Gemini's free
+// quota. A build with publik then offers one tap to "Switch to publik" (index.js). Not for a
+// dropped connection, a busy model, a timeout or a refusal: those pass, or are not the key's fault.
+function ownKeyStuck(provider, raw) {
+  if (String(provider || '').toLowerCase() === 'publik') return false;
+  const text = String((raw && raw.message) || raw || '');
+  if (!text || /aborted|AbortError/i.test(text)) return false;
+  if (/^No AI is set up|no_ai/i.test(text)) return true;
+  if (SIGNED_OUT.test(text) || /cli_spawn_failed|cli_not_found|cli_spend_limit|usage limit/i.test(text)) return true;
+  if (NET.test(text)) return false;
+  if (/\b402\b|more credits|credit balance|insufficient.{0,12}credit|out of credits/i.test(text)) return true;
+  if (/\b429\b|RESOURCE_EXHAUSTED|quota|rate.?limit|too many requests/i.test(text)) return true;
+  if (/\b50[234]\b|\b529\b|UNAVAILABLE|overloaded|high demand|temporarily|timed? ?out|cli_timeout|deadline/i.test(text)) return false;
+  if (/API key not valid|API_KEY_INVALID|invalid.{0,12}(api.?)?key|authentication|unauthori[sz]ed|\b401\b/i.test(text)) return true;
+  if (/PERMISSION_DENIED|SERVICE_DISABLED|forbidden|\b403\b/i.test(text)) return true;
+  if (/location|region|not supported in your/i.test(text)) return true;
+  if (/\b404\b|not found|no longer available/i.test(text)) return true;
+  return false;
+}
+
+module.exports = { plainAskError, providerName, ownKeyStuck };
