@@ -16,7 +16,7 @@ const P = KSPEC.host.play;
 const B = { w: 1920, h: 1080, m: KSPEC.host.clampMargin };
 
 test('spec has every number the game reads', () => {
-  for (const k of ['radius', 'throwMin', 'throwMax', 'releaseStaleMs', 'throwWindowMs', 'gravity', 'air', 'wall', 'floor', 'floorFriction', 'restSpeed', 'spin', 'idleEndMs', 'hitstopMs']) assert.ok(Number.isFinite(P[k]), k);
+  for (const k of ['radius', 'throwMin', 'throwMax', 'releaseStaleMs', 'throwWindowMs', 'gravity', 'air', 'wall', 'floor', 'floorFriction', 'restSpeed', 'spin', 'spinMax', 'idleEndMs', 'hitstopMs']) assert.ok(Number.isFinite(P[k]), k);
   for (const k of ['per', 'max', 'k', 'damp']) assert.ok(Number.isFinite(P.squash[k]), 'squash.' + k);
   for (const k of ['r', 'rimR', 'rimBounce', 'boardBounce', 'boardUp', 'boardDown', 'boardGap', 'makesPerLevel', 'minY', 'maxY', 'margin']) assert.ok(Number.isFinite(P.hoop[k]), 'hoop.' + k);
   assert.ok(Array.isArray(P.hoop.motion) && P.hoop.motion.length >= 3);
@@ -44,6 +44,18 @@ test('a thrown ball never leaves the screen, spins, and rolls to rest on the flo
   assert.equal(s.p.y, B.h - B.m);
   assert.notEqual(s.rot, 0, 'it turned on the way');
   assert.equal(s.spin, 0, 'at rest it has stopped turning');
+});
+
+test('however hard it is thrown, it is never seen turning faster than spinMax', () => {
+  assert.ok(P.spinMax > 0 && P.spinMax < 2 * Math.PI, 'under one turn a second');
+  const s = { p: { x: 900, y: 500 }, v: { x: P.throwMax, y: -400 }, onFloor: false, spin: P.throwMax / P.radius * P.spin, rot: 0 };
+  for (let i = 0; i < 10 * 60; i++) {
+    const before = s.rot;
+    Play.stepBall(s, 1 / 60, B, P);
+    let d = Math.abs(s.rot - before);
+    if (d > Math.PI) d = 2 * Math.PI - d;
+    assert.ok(d <= P.spinMax / 60 + 1e-9, 'step ' + i + ' turned ' + d);
+  }
 });
 
 test('the board sits on the outside of the rim, and a ball thrown at it banks back', () => {

@@ -59,7 +59,10 @@
       // Rolling: it turns exactly as far as it travels.
       s.spin = v.x / P.radius;
     } else s.spin = (s.spin || 0) * Math.max(0, 1 - 0.4 * dt);
-    s.rot = ((s.rot || 0) + (s.spin || 0) * dt) % (Math.PI * 2);
+    // What the eye sees turns no faster than spinMax: a true roll at these speeds
+    // is a blur of 5 to 10 turns a second (Pranav, 2026-11-15: "spins rapidly").
+    const turn = Math.max(-P.spinMax, Math.min(P.spinMax, s.spin || 0));
+    s.rot = ((s.rot || 0) + turn * dt) % (Math.PI * 2);
     return ev;
   }
 

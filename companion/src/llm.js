@@ -7,7 +7,13 @@ function stripDataUrl(dataUrl) {
   return m ? { mime: m[1], b64: m[2] } : null;
 }
 
-async function streamOpenAI({ apiKey, model, system, turns, imageDataUrl, maxTokens, onToken, baseURL, signal }) {
+// idleAfterTextMs: publik sometimes sends the whole reply and then neither its
+// finish chunk nor [DONE], and holds the connection open until 300 s (raw SSE
+// probe 2026-11-15: 2 of 8 calls; 67 of 216 guide calls in the pointing
+// measurement, every one with its text already complete). With this set, once
+// text has arrived, that long without a new token ends the call with the text.
+async function streamOpenAI({ apiKey, model, system, turns, imageDataUrl, maxTokens, onToken, baseURL, signal, idleAfterTextMs }) {
+  if (idleAfterTextMs > 0) return streamUntilIdle({ apiKey, model, system, turns, imageDataUrl, maxTokens, onToken, baseURL, signal }, idleAfterTextMs);
   if (DEBUG) console.log('[DEBUG LLM] streamOpenAI called', { model, baseURL, hasImage: !!imageDataUrl, maxTokens });
   const OpenAI = require('openai');
   const client = new OpenAI({ apiKey, baseURL });
@@ -40,6 +46,28 @@ async function streamOpenAI({ apiKey, model, system, turns, imageDataUrl, maxTok
     if (DEBUG) console.error('[DEBUG LLM] streamOpenAI error:', err);
     throw err;
   }
+}
+
+// A reply that has reached the end of a sentence, a tag or a line. One that goes
+// quiet mid-word or mid-sentence ("Click ") gets one more idle window before it
+// is taken as it is, so a slow chunk is never cut short at the first pause.
+const LOOKS_FINISHED = /[.!?\])"'`*:;’”…]\s*$|\n\s*$/;
+function streamUntilIdle(args, idleMs) {
+  const inner = new AbortController();
+  const outer = args.signal;
+  let full = '', timer = null, idled = false, waitedOnce = false;
+  const onAbort = () => inner.abort();
+  if (outer) { if (outer.aborted) inner.abort(); else outer.addEventListener('abort', onAbort, { once: true }); }
+  const quiet = () => {
+    if (!waitedOnce && !LOOKS_FINISHED.test(full)) { waitedOnce = true; timer = setTimeout(quiet, idleMs); if (timer.unref) timer.unref(); return; }
+    idled = true; inner.abort();
+  };
+  const arm = () => { clearTimeout(timer); timer = setTimeout(quiet, idleMs); if (timer.unref) timer.unref(); };
+  const onToken = (d) => { full += d; arm(); if (args.onToken) args.onToken(d); };
+  const done = () => { clearTimeout(timer); if (outer) outer.removeEventListener('abort', onAbort); };
+  return streamOpenAI({ ...args, signal: inner.signal, onToken }).then(
+    (text) => { done(); if (outer && outer.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; } return idled ? full : text; },
+    (err) => { done(); if (idled && !(outer && outer.aborted) && full) return full; throw err; });
 }
 
 // effort: 'low' | 'medium' | 'high' | ... (output_config.effort). Current Claude
@@ -181,12 +209,15 @@ async function completeGemini({ apiKey, model, system, turns, imageDataUrl, maxT
 // person picked "Connect your plan". Same OpenAI-compatible path as above, tier names only.
 let publik = null;
 try { publik = require('./publik'); } catch (_) { publik = null; }
+// Normal publik streams send their tokens within milliseconds of each other
+// (about 35 chunks in 0.5 s); 2.5 s of silence after text is a stall, not a pause.
+const PUBLIK_IDLE_AFTER_TEXT_MS = 2500;
 function publikLLM() {
   const p = publik.provider();
   const tierOf = (s) => (s && s.smart ? 'smart' : 'fast');
   return (settings) => {
     const model = publik.model(tierOf(settings));
-    const run = (args) => streamOpenAI({ ...args, apiKey: p.apiKey, baseURL: p.baseURL, imageDataUrl: args.imageDataUrl ? publik.prepareImage(args.imageDataUrl) : args.imageDataUrl });
+    const run = (args) => streamOpenAI({ ...args, apiKey: p.apiKey, baseURL: p.baseURL, idleAfterTextMs: PUBLIK_IDLE_AFTER_TEXT_MS, imageDataUrl: args.imageDataUrl ? publik.prepareImage(args.imageDataUrl) : args.imageDataUrl });
     return {
       provider: 'publik', model, apiKey: p.apiKey, ready: true,
       stream: (params) => run({ maxTokens: 4096, ...params, model }),
@@ -240,4 +271,4 @@ function createLLM(settings) {
   };
 }
 
-module.exports = { createLLM };
+module.exports = { createLLM, streamOpenAI, PUBLIK_IDLE_AFTER_TEXT_MS, LOOKS_FINISHED };

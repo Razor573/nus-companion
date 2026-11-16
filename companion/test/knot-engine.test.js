@@ -594,3 +594,42 @@ test('a region step dismissed mid-trace stops where it is, reels the mark in, an
   assert.equal(f.knot.stats().mark, null);
   assert.ok(f.knot.stats().pose.scale > .8, 'back to its idle size');
 });
+
+// 2026-11-16, the "fast spin": the facing angle kept every whole turn the Knot was
+// dragged around in, and the next time its tail wound in or out it unwound all of
+// them at once (after three circles, three turns in a fraction of a second).
+function turnsDrawn(f, ms) {
+  // True 2D turning of the drawn outline, frame to frame (best rigid fit), in turns.
+  const fit = (a, b) => {
+    let ax = 0, ay = 0, bx = 0, by = 0; const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) { ax += a[i].x; ay += a[i].y; bx += b[i].x; by += b[i].y; }
+    ax /= n; ay /= n; bx /= n; by /= n;
+    let c = 0, s = 0;
+    for (let i = 0; i < n; i++) { const x1 = a[i].x - ax, y1 = a[i].y - ay, x2 = b[i].x - bx, y2 = b[i].y - by; c += x1 * x2 + y1 * y2; s += x1 * y2 - y1 * x2; }
+    return Math.atan2(s, c);
+  };
+  let prev = f.knot.debugPoints(), turns = 0;
+  for (let t = 0; t < ms; t += FRAME) { f.run(FRAME); const p = f.knot.debugPoints(); turns += Math.abs(fit(prev, p)) / (2 * Math.PI); prev = p; }
+  return turns;
+}
+
+test('dragged in circles, the Knot does not unwind those turns when its tail later winds in or out', () => {
+  const f = fixture({ x: 1500, y: 800 });
+  f.run(1500);
+  // Three circles of 160 px at one a second, the hand's speed fed in as a drag does.
+  const cx = 1340, cy = 800; let last = null;
+  for (let t = 0; t < 3000; t += FRAME) {
+    const a = 2 * Math.PI * t / 1000, x = cx + 160 * Math.cos(a), y = cy + 160 * Math.sin(a);
+    if (last) f.knot.setDrag({ vx: (x - last.x) * 60, vy: (y - last.y) * 60 });
+    last = { x, y }; f.pos.x = x; f.pos.y = y; f.run(FRAME);
+  }
+  f.knot.setDrag(null); f.run(1500);
+  // A click: the ask line opens (the tail reaches out), then closes (it winds back in).
+  f.knot.setState('ready'); f.thread.reachTo({ x: f.pos.x - 230, y: f.pos.y - 170 });
+  const opening = turnsDrawn(f, 1200);
+  f.thread.releaseSurface(); f.knot.setState('idle');
+  const closing = turnsDrawn(f, 1500);
+  assert.ok(opening < 0.15, 'opening turned ' + opening.toFixed(2) + ' turns');
+  assert.ok(closing < 0.15, 'closing turned ' + closing.toFixed(2) + ' turns');
+  assert.equal(f.log.nonFinite, 0);
+});

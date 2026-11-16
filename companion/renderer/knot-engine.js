@@ -341,6 +341,16 @@
         const q = shape[k];
         if (!Number.isFinite(q.x) || !Number.isFinite(q.v) || (Math.abs(goal[k] - q.x) < snap.x && Math.abs(q.v) < snap.v)) { q.x = goal[k]; q.v = 0; }
       }
+      // The facing angle only shows through the tail (bodyPoints: turn = aim x tail),
+      // so with the tail all the way in or all the way out a whole turn of it changes
+      // nothing on screen. Drop whole turns there. Kept, they piled up turn by turn
+      // while the Knot was dragged in circles or thrown around in a game, and the next
+      // time the tail wound in or out (a click, a drop, the flight home) it unwound
+      // every one of them in a fraction of a second: the "fast spin" (2026-11-16).
+      {
+        const shown = smooth(Math.min(clamp(shape.loose.x, 0, 1.05) * smooth(tailReady), 1));
+        if ((shown < 1e-3 || shown > 1 - 1e-3) && Math.abs(shape.aim.x) > Math.PI) shape.aim.x -= TAU * Math.round(shape.aim.x / TAU);
+      }
       integrateSpin(dt);
       // Coming out of a spin the tail waits until the turn has nearly landed, so
       // the lobe it grows from is already on its side of the body. Eased, so an

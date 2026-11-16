@@ -2088,6 +2088,9 @@
       const sm = ds.samples || [];
       if (sm.length >= 2) { const a = sm[0], z = sm[sm.length - 1], span = Math.max(8, z.t - a.t) / 1000; v = { x: (z.x - a.x) / span, y: (z.y - a.y) / span }; }
       play.release(at, v, performance.now() - ds.lt);
+      // Out of the hand: the Knot is no longer dragged. Left on, the engine kept the
+      // dragged look for the rest of the game, its tail chasing every bounce.
+      if (knot3d && knot3d.setDrag) knot3d.setDrag(null);
       return;
     }
     dragStart = null; dragging = false; dragLast = null;

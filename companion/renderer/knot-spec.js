@@ -152,6 +152,7 @@
       floorFriction: 4,          // rolling on the floor slows this fast
       restSpeed: 36,             // slower than this on the floor: it has stopped
       spin: .55,                 // spin on release, as a share of rolling speed
+      spinMax: 5,                // rad/s, the fastest it is seen to turn (under one turn a second)
       idleEndMs: 40000,          // nothing touched this long and the game ends
       hitstopMs: 75,             // the beat of stillness after a swish or bank shot
       // Impacts squash the Knot along their direction and it springs back.
