@@ -138,35 +138,6 @@
     clampMargin: 40,           // the Knot's centre stays this far inside the screen
     mic: { bright: .1, band: .5 },     // how much the live mic level lifts the glow and the band while listening
     skater: { minDistance: 80 },
-    // Play (renderer/play.js): hoops, started on purpose from the Knot's menu or
-    // the tray, never during a task. px, px/s, px/s^2, seconds.
-    play: {
-      radius: 28,                // the Knot as a ball: what bounces and what scores
-      throwMin: 240,             // a release slower than this just drops
-      throwMax: 3400,
-      releaseStaleMs: 90,        // the hand stopped this long before letting go: no throw
-      throwWindowMs: 80,         // the throw is the hand's average speed over this last stretch
-      gravity: 2000,
-      air: .22,                  // speed lost per second in the air (fraction)
-      wall: .62, floor: .5,      // how much speed a bounce keeps
-      floorFriction: 4,          // rolling on the floor slows this fast
-      restSpeed: 36,             // slower than this on the floor: it has stopped
-      spin: .55,                 // spin on release, as a share of rolling speed
-      idleEndMs: 40000,          // nothing touched this long and the game ends
-      hitstopMs: 75,             // the beat of stillness after a swish or bank shot
-      // Impacts squash the Knot along their direction and it springs back.
-      squash: { per: 1 / 4200, max: .26, k: 520, damp: 20 },
-      // board: up/down from the rim and its gap from the rim's back end, all times r.
-      // motion per level (1, 2, 3...): drift (share of width), speed (rad/s), bob (share of height).
-      hoop: {
-        r: 56, rimR: 5, rimBounce: .55, boardBounce: .72, boardUp: 1.35, boardDown: .3, boardGap: .14,
-        makesPerLevel: 3, minY: .2, maxY: .42, margin: .1,
-        motion: [{ drift: 0, speed: 0, bob: 0 }, { drift: 0, speed: 0, bob: 0 }, { drift: .1, speed: .9, bob: 0 }, { drift: .13, speed: 1.2, bob: 0 }, { drift: .14, speed: 1.4, bob: .04 }, { drift: .16, speed: 1.7, bob: .06 }],
-      },
-      // A ball already coming down near the rim is pulled gently toward it.
-      assist: { reach: 1.5, above: 2.6, pull: 900 },
-      score: { make: 1, swish: 2, bank: 2, fireAt: 3, fireMul: 2 },
-    },
     acrobat: { minWidth: 320, minHeight: 200 },
     // A project resuming: how long the thread rests on each of its open windows.
     projectWindows: { holdMs: 1100 },
