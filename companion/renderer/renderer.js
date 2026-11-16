@@ -229,6 +229,8 @@
   // 'done' (green) for a beat when it lets go, null otherwise. Declared up here
   // because syncKnotUi reads it from the first paint on.
   let guardGlow = null;
+  // The game (play.js), made further down once the Knot's layout exists.
+  let play = null;
   // The tour's card now up (declared early for the same reason: the Knot holds
   // its attentive state while one is).
   let tourCard = null;
@@ -287,6 +289,9 @@
       knot3d.setState(body);
     }
     syncIsland(state);
+    // Play never runs under a task: a guide step, an answer on its way or the mic
+    // open ends the game on the spot.
+    if (play && play.active && (guideState || busy || acking || listening)) stopPlay('task');
     if (state !== 'idle') noteActivity();
   }
 
@@ -303,7 +308,7 @@
   }
   function maybeSleep() {
     if (!knot3d || !knot3d.sleep) return;
-    const quiet = !guideState && !busy && !quickOpen && !pttHeld && !captureOn() && !modalOpen() && !speakingNow && !dragging
+    const quiet = !guideState && !busy && !quickOpen && !pttHeld && !captureOn() && !modalOpen() && !speakingNow && !dragging && !(play && play.active)
       && !isShown(panel, 'collapsed') && !isShown(bubble) && !isShown(knotHint) && !isShown(keepChip) && !isShown($('#tour'))
       && !(strand && strand.isOut()) && !(knot3d.isTravelling && knot3d.isTravelling());
     if (!quiet) { armSleep(); return; }
@@ -641,6 +646,7 @@
   }
   $('#orb').addEventListener('click', (e) => {
     if (suppressClick) { suppressClick = false; return; } // the release of a drag
+    if (play && play.active) return; // a press in a game is the game's
     pokeKnot(e);
     // In the pill, with tasks to show, the Knot unfolds the list. Nothing listed: as ever.
     if (islandOn && taskPanel && taskPanel.available()) { taskPanel.toggle(); return; }
@@ -670,7 +676,7 @@
   }
   let orbPointerType = '';
   $('#orb').addEventListener('pointerdown', (e) => { orbPointerType = e.pointerType; });
-  $('#orb').addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); knotDashboard(); });
+  $('#orb').addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); if (play && play.active) return; knotDashboard(); });
   $('#orb').addEventListener('pointerup', (e) => {
     if (e.pointerType !== 'touch' || suppressClick) return;
     if (e.timeStamp - knotTapAt < KNOT_DOUBLE_TAP_MS) { knotTapAt = 0; knotDashboard(); } else knotTapAt = e.timeStamp;
@@ -931,6 +937,7 @@
   let micIdleTimer = null;
   nus.on('ptt:state', ({ held }) => {
     pttHeld = !!held;
+    if (pttHeld && play && play.active) stopPlay('task');
     tourPtt(pttHeld);
     if (islandOn) syncKnotUi(); else syncIsland(lastIslandState);
     clearTimeout(micIdleTimer); micIdleTimer = null;
@@ -1269,6 +1276,8 @@
     // a stray probe hand the mouse back to the desktop underneath it. Same
     // while the Knot is being dragged or a file is being dragged over it.
     if (modalOpen() || dragging || fileDragActive) return true;
+    // The game on: the whole screen is the court (play.js).
+    if (play && play.active) return true;
     const el = document.elementFromPoint(cssX, cssY);
     return !!(el && el.closest && el.closest('#knot-shell, #island .tp, #panel-wrap, #settings-scrim, #onboard-scrim, #daily-line, #guide-bubble, #keep-chip, #quick-ask, #knot-hint, #tour, #tour-tuck') || overPillAt(cssX, cssY));
   }
@@ -1291,7 +1300,7 @@
     const now = Date.now();
     if (now - mouseNotedAt < 1000) return;
     mouseNotedAt = now;
-    let by = dragging ? 'dragging' : fileDragActive ? 'file-drag' : modalOpen() ? 'modal' : '';
+    let by = dragging ? 'dragging' : fileDragActive ? 'file-drag' : modalOpen() ? 'modal' : (play && play.active) ? 'play' : '';
     if (!by) { const el = document.elementFromPoint(pointerAt.x, pointerAt.y); by = el ? (el.id ? '#' + el.id : el.tagName.toLowerCase()) : 'nothing'; }
     nus.noteMouse({ by, x, y, knotX: k.x, knotY: k.y });
   }
@@ -1323,7 +1332,7 @@
   // A finger has no hover, so on a touchscreen an invisible window catches taps on
   // these controls and they arrive here (companion/src/touch-pad.js). The same list
   // as overUIAt and overPillAt. Nothing runs without a touchscreen.
-  const TOUCH_CONTROLS = '#knot-shell, #island .tp, #panel-wrap, #settings-scrim, #onboard-scrim, #daily-line, #guide-bubble, #keep-chip, #quick-ask, #knot-hint, #tour, #tour-tuck, #island.live, #knot-panel, #knot-menu';
+  const TOUCH_CONTROLS = '#play-hud, #knot-shell, #island .tp, #panel-wrap, #settings-scrim, #onboard-scrim, #daily-line, #guide-bubble, #keep-chip, #quick-ask, #knot-hint, #tour, #tour-tuck, #island.live, #knot-panel, #knot-menu';
   if (navigator.maxTouchPoints > 0 && nus.touchPadRects && window.NusTouchForward) {
     const padZoom = () => Math.pow(1.2, (nus.getZoomLevel && nus.getZoomLevel()) || 0);
     const padForward = window.NusTouchForward.create({ doc: document, view: window, zoom: padZoom });
@@ -1913,6 +1922,7 @@
   // Main (the tray menu, Home, a voice command) asks the Knot to move.
   nus.on('knot:move', (p) => {
     if (!p) return;
+    if (play && play.active) stopPlay('task');
     // "Go back": to where it was before it was last sent somewhere.
     if (p.home) {
       if (skateHome) { stepHome(); return; }
@@ -1994,6 +2004,7 @@
     if (!p) return;
     clearTimeout(guardTimer);
     if (p.phase === 'hop') {
+      if (play && play.active) stopPlay('task');
       setGuardGlow('active');
       const r = p.rect;
       if (r && knotPos && !dragging && Number.isFinite(r.x) && Number.isFinite(r.w)) {
@@ -2027,7 +2038,10 @@
   orbEl.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     if (knot3d && knot3d.isTravelling && knot3d.isTravelling()) return;
-    dragStart = { x: e.clientX, y: e.clientY, kx: knotPos ? knotPos.x : e.clientX, ky: knotPos ? knotPos.y : e.clientY, id: e.pointerId, lx: e.clientX, ly: e.clientY, lt: performance.now() };
+    // In the game the hand takes it mid-air, from wherever it is.
+    let from = knotPos;
+    if (play && play.active) { from = play.position() || knotPos; play.press(from); playRide = { rot: playRide.rot, sx: 1, sy: 1 }; }
+    dragStart = { x: e.clientX, y: e.clientY, kx: from ? from.x : e.clientX, ky: from ? from.y : e.clientY, id: e.pointerId, lx: e.clientX, ly: e.clientY, lt: performance.now(), vx: 0, vy: 0 };
     try { orbEl.setPointerCapture(e.pointerId); } catch (_) { /* preview */ }
   });
   orbEl.addEventListener('pointermove', (e) => {
@@ -2042,9 +2056,17 @@
     // Speed of the hand in px per second, from timestamps.
     const now = performance.now(), dt = Math.max(KSPEC.inline.drag.minDt, (now - dragStart.lt) / 1000);
     const vx = (e.clientX - dragStart.lx) / dt, vy = (e.clientY - dragStart.ly) / dt;
-    dragStart.lx = e.clientX; dragStart.ly = e.clientY; dragStart.lt = now;
+    dragStart.lx = e.clientX; dragStart.ly = e.clientY; dragStart.lt = now; dragStart.vx = vx; dragStart.vy = vy;
     dragLast = { x: dragStart.kx + dx, y: dragStart.ky + dy };
     if (knot3d && knot3d.setDrag) knot3d.setDrag({ vx, vy });
+    if (play && play.active) {
+      // The throw is the hand's average speed over its last stretch, not one jittery sample.
+      const sm = dragStart.samples || (dragStart.samples = []);
+      sm.push({ t: now, x: e.clientX, y: e.clientY });
+      while (sm.length > 2 && now - sm[0].t > KSPEC.host.play.throwWindowMs) sm.shift();
+      const at = clampPos(dragLast); play.dragTo(at); ridePlay(at);
+      return;
+    }
     if (!dragRaf) dragRaf = requestAnimationFrame(() => {
       dragRaf = null;
       if (!dragLast) return;
@@ -2055,6 +2077,19 @@
   function endDrag(e) {
     if (!dragStart) return;
     const was = dragging;
+    if (play && play.active) {
+      // Let go in a game: the hand's last speed is the throw.
+      const ds = dragStart, at = play.position();
+      dragStart = null; dragging = false; dragLast = null;
+      if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = null; }
+      appEl.classList.remove('dragging');
+      if (was) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); }
+      let v = { x: ds.vx, y: ds.vy };
+      const sm = ds.samples || [];
+      if (sm.length >= 2) { const a = sm[0], z = sm[sm.length - 1], span = Math.max(8, z.t - a.t) / 1000; v = { x: (z.x - a.x) / span, y: (z.y - a.y) / span }; }
+      play.release(at, v, performance.now() - ds.lt);
+      return;
+    }
     dragStart = null; dragging = false; dragLast = null;
     if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = null; }
     appEl.classList.remove('dragging');
@@ -2074,6 +2109,118 @@
   orbEl.addEventListener('pointerup', endDrag);
   orbEl.addEventListener('pointercancel', endDrag);
   orbEl.addEventListener('lostpointercapture', () => { if (dragging) endDrag(null); });
+
+  // ---- play: hoops (play.js) ------------------------------------------------
+  // Started on purpose from the Knot's menu or the tray, never in the middle of a
+  // task, and any task ends it on the spot (stopPlay('task') above). While a game
+  // is on the whole screen holds the mouse, so a missed grab never clicks the app
+  // underneath; the score line's x, a right click or 40 s untouched ends it.
+  // In play the Knot rides a transform from where it lives (like a flight), so
+  // nothing reflows each frame, and its home is never overwritten.
+  let playHome = null, playFx = null, playSound = null;
+  // The Knot in play: where it is, plus its spin and the squash of its last
+  // impact. Held in the hand it keeps the spin it had and loses the squash.
+  let playRide = { rot: 0, sx: 1, sy: 1 };
+  function ridePlay(at) {
+    if (!knotPos || !at) return;
+    if (at.rot != null) playRide = { rot: at.rot, sx: at.sx || 1, sy: at.sy || 1 };
+    const r = playRide;
+    orbEl.style.transform = 'translate(' + (at.x - knotPos.x).toFixed(2) + 'px,' + (at.y - knotPos.y).toFixed(2) + 'px) scale(' + r.sx.toFixed(3) + ',' + r.sy.toFixed(3) + ') rotate(' + r.rot.toFixed(3) + 'rad)';
+  }
+  // '' when the Knot is free to play, otherwise why not.
+  function playBlocker() {
+    if (!window.NusPlay || !knot3d || !knotPos) return 'unavailable';
+    if (islandOn) return 'island';
+    if (reducedMotion()) return 'reduced-motion';
+    if (guideActive() || busy || pttHeld || captureOn() || speakingNow || handsState.active || modalOpen() || tourCard || dragging || fileDragActive) return 'busy';
+    if (knot3d.isTravelling && knot3d.isTravelling()) return 'busy';
+    return '';
+  }
+  function playStore() {
+    return {
+      get(k) { try { return window.localStorage.getItem('nus.' + k); } catch (_) { return null; } },
+      set(k, v) { try { window.localStorage.setItem('nus.' + k, v); } catch (_) { /* private storage */ } },
+    };
+  }
+  function makePlay() {
+    if (play || !window.NusPlay) return play;
+    const bounds = () => ({ w: window.innerWidth, h: window.innerHeight, m: KNOT_MARGIN });
+    // What it looks like and sounds like. Both are made here, on the first game,
+    // and hold nothing between games (play-fx.js, play-sound.js).
+    const pal = (KSPEC.character && KSPEC.character.accent && KSPEC.character.accent.palette) || { idle: '#F5F5F7', listening: '#C58AFF', thinking: '#FFC76A', speaking: '#59B9FF', done: '#72DDA8', error: '#FF706B' };
+    playFx = window.NusPlayFx ? window.NusPlayFx.create({ doc: document, view: window, spec: KSPEC.host.play, palette: pal, font: getComputedStyle(document.body).fontFamily }) : null;
+    // Silent with Sound cues off, while the mic is live or the Knot speaks.
+    playSound = window.NusPlaySound ? window.NusPlaySound.create({ enabled: () => cues.isEnabled() && !pttHeld && !speakingNow && !captureOn() }) : null;
+    play = window.NusPlay.create({ doc: document, spec: KSPEC.host.play, host: {
+      now: () => performance.now(),
+      raf: (fn) => requestAnimationFrame(fn),
+      caf: (id) => cancelAnimationFrame(id),
+      bounds,
+      place: ridePlay,
+      lean: (v) => { if (knot3d && knot3d.setDrag) knot3d.setDrag(v ? { vx: v.vx, vy: v.vy } : null); },
+      emit: (e) => {
+        if (playFx) { if (e.type === 'start') playFx.start(); playFx.event(e); if (e.type === 'stop') playFx.stop(); }
+        if (playSound) playSound.event(e);
+      },
+      draw: (dt, v) => (playFx ? playFx.draw(dt, v, bounds()) : false),
+      gesture: (name) => { if (knot3d && knot3d.gesture) knot3d.gesture(name); },
+      store: playStore(),
+      log: (line) => nus.log(line),
+      onEnd: endPlay,
+    } });
+    window.__nusPlay = play;
+    return play;
+  }
+  function startPlay() {
+    const why = playBlocker();
+    if (why) {
+      nus.log('[play] not now: ' + why);
+      if (why === 'busy') showHint({ text: 'Let me finish this first, then we can play.', ms: 2600 });
+      return false;
+    }
+    if (!makePlay()) return false;
+    if (play.active) return true;
+    if (quickOpen) closeQuickAsk();
+    if (knotMenu) knotMenu.close();
+    if (knotPanel && knotPanel.open) knotPanelShut();
+    hideHint(); hideBubble(); pendingBubble = null; clearTimeout(keepTimer); hideSurface(keepChip);
+    if (isShown(panel, 'collapsed')) hideTiles();
+    releaseKeys();
+    skateHome = null;
+    playHome = { x: knotPos.x, y: knotPos.y };
+    playRide = { rot: 0, sx: 1, sy: 1 };
+    appEl.classList.add('skating');
+    noteActivity();
+    play.start({ x: knotPos.x, y: knotPos.y });
+    setIgnoreSafe(false);
+    return true;
+  }
+  function stopPlay(reason) { if (play && play.active) play.stop(reason); }
+  // The game is over: the Knot goes home. A task is waiting, so it is simply
+  // there at once; otherwise it flies back.
+  function endPlay(reason, at) {
+    const home = playHome || knotPos;
+    playHome = null;
+    orbEl.style.transform = '';
+    if (knot3d && knot3d.setDrag) knot3d.setDrag(null);
+    if (reason === 'task' || !at || !home) {
+      appEl.classList.remove('skating');
+      if (home) applyKnotPos(home);
+      if (knot3d && knot3d.gesture) knot3d.gesture('settle');
+    } else {
+      // Commit where it landed, then fly home from there.
+      applyKnotPos(at);
+      requestAnimationFrame(() => { appEl.classList.remove('skating'); moveKnotTo(home, { persist: false, retarget: true }); });
+    }
+    const p = pointerAt || { x: -1, y: -1 };
+    setIgnore(!overUIAt(p.x, p.y));
+    armSleep();
+  }
+  nus.on('play:start', () => startPlay());
+  // A tour card or Hands taking the mouse is a task too.
+  nus.on('tour:card', () => stopPlay('task'));
+  nus.on('hands:state', (p) => { if (p && p.active) stopPlay('task'); });
+  document.addEventListener('contextmenu', (e) => { if (play && play.active) { e.preventDefault(); e.stopPropagation(); stopPlay('user'); } }, true);
 
   // ---- drop a file on the Knot -------------------------------------------
   // The window is click-through until the cursor probe finds the Knot under
@@ -2483,6 +2630,7 @@
   // contact card's Leave my email). It goes to the main process as that, never as an ask.
   let quickContact = false;
   function openQuickAsk(about, feedback, contact) {
+    if (play && play.active) stopPlay('task');
     quickOpen = true;
     const wait = claimKnotSlot(quickAsk);
     quickAbout = about || null;
@@ -3049,7 +3197,8 @@
     options: window.NusQuickOptions,
     read: () => (nus.settingsGet ? nus.settingsGet() : null),
     write: (patch) => nus.settingsSet(patch),
-    action: (id) => nus.guideAsk({ action: id }),
+    action: (id) => { if (id === 'play') { startPlay(); return; } nus.guideAsk({ action: id }); },
+    canPlay: () => playBlocker() === '',
     place: placeMenu,
     onChange: (open) => {
       nus.guideAsk({ action: 'task-panel', menu: true, open: open || !!(taskPanel && taskPanel.open) });
