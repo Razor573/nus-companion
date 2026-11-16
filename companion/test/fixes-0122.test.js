@@ -144,7 +144,10 @@ test('pressing the thank-you\'s button sends fixed words, never an ask', async (
   assert.match(index, /week = !!w && !\(w\.plan && w\.plan\.kind === 'plan'\)/, 'not offered to someone who already has a plan');
 });
 
-test('0.1.22 is the version in the build config and in publik\'s module', () => {
-  assert.match(read('electron-builder.companion.config.js'), /version: '0\.1\.22'/);
-  assert.match(read('companion/src/publik/publik.js'), /const APP_VERSION = "0\.1\.22";/);
+test('the build config and publik\'s module carry the same release version', () => {
+  const build = /version: '(\d+\.\d+\.\d+)'/.exec(read('electron-builder.companion.config.js'));
+  const mod = /const APP_VERSION = "(\d+\.\d+\.\d+)";/.exec(read('companion/src/publik/publik.js'));
+  assert.ok(build && mod, 'both name a version');
+  assert.equal(mod[1], build[1]);
+  assert.equal(build[1], '0.1.23');
 });

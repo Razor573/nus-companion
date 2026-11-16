@@ -206,8 +206,11 @@
     $('#cli-state').textContent=status.ai.cli?'Found':'Not found';$('#cli-state').classList.toggle('set',!!status.ai.cli);
     $('#claude-status').textContent=status.ai.cli?'Claude Code is installed. If it is signed in, it answers and points with no key.':'Not installed. Not needed if you have a Gemini, Nvidia or Anthropic key.';
     const pub=status.publik||{on:false},viaPublik=!!(pub.on&&pub.choice==='publik');$('#publik-row').hidden=!pub.on;$('#use-own-key').checked=!viaPublik;
-    const voiceOk=!!status.reflex.key, answersOk=!!(viaPublik||s.keys.gemini||s.keys.nvidia||s.keys.anthropic||status.ai.cli);
-    $('#step-voice').textContent=voiceOk?'Ready':'Not set';$('#step-voice').classList.toggle('set',voiceOk);
+    // Voice commands run on the built-in rules with no key (src/reflex/rules.js), so this step is
+    // never "Not set". A saved TypeSafe key is named beside it; it is optional.
+    const answersOk=!!(viaPublik||s.keys.gemini||s.keys.nvidia||s.keys.anthropic||status.ai.cli);
+    $('#step-voice').textContent=status.reflex.key?'Ready · TypeSafe':'Ready';$('#step-voice').classList.add('set');
+    $('#typesafe-state').textContent=status.reflex.key?'Set · '+status.reflex.keySource:'Optional';
     $('#step-answers').textContent=answersOk?'Ready'+(viaPublik?' · publik':s.keys.gemini?' · Gemini':s.keys.anthropic?' · Anthropic':s.keys.nvidia?' · Nvidia':' · Claude Code'):'Not set';$('#step-answers').classList.toggle('set',answersOk);
     $('#voice-status').textContent='Whisper engine: '+(status.voice.whisper?'found':'missing')+' · Speech model: '+(status.voice.model?'found':'missing');
     $('#ptt-live').textContent=chord(status.ptt.accelerator);

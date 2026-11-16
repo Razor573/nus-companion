@@ -210,6 +210,19 @@ const APP_GUIDE = 'APP GUIDE (answer questions about Nus from this, not from the
 // The one sentence for "there is no AI to answer", pointing at the checklist.
 const NO_KEY_COPY = 'No AI is set up yet. Add a free Gemini key or an Anthropic key on the dashboard, under Settings, Keys, or sign in to Claude Code. The checklist there tests each one.';
 
+// What the Knot tells someone who asks which keys they need. Until 0.1.22 it said to add a TypeSafe
+// key and a Gemini key, which stopped being true in 0.1.18: publik answers with no key, and voice
+// commands have run on the built-in rules with no key since 0.1.7 (src/reflex/rules.js). A tester
+// asked "do I need a Jev key?" on 2026-11-15 because of that line.
+function keysGuide() {
+  let viaPublik = false, publikBuild = false;
+  try { const p = require('./src/publik'); publikBuild = p.on(); viaPublik = p.active(); } catch (_) { /* a build without publik */ }
+  const voice = 'Voice commands such as opening an app, typing and searching need no key. A TypeSafe key in Settings, Keys is optional.';
+  if (viaPublik) return 'No key is needed: answers and pointing come through the publik account this person signed in with. In Settings, Keys they can switch to their own Gemini, Anthropic or Nvidia key, or Claude Code, if they prefer. ' + voice;
+  const own = 'Answers and pointing use one of these, set in Settings, Keys: a free Gemini key, an Anthropic or Nvidia key, or Claude Code if it is installed and signed in.';
+  return own + (publikBuild ? ' Or switch back to publik there, which needs no key.' : '') + ' ' + voice;
+}
+
 function appGuide() {
   if (!STANDALONE) return APP_GUIDE;
   const chord = ptt.accelerator || DEFAULT_PTT_SHORTCUT;
@@ -217,7 +230,7 @@ function appGuide() {
     'Hold ' + chord + ' to talk, or press it to toggle when open mic is on. Ctrl+Shift+T selects what is under the cursor to ask about. ' +
     'Ctrl+Shift+Space shows or hides the Knot, and Ctrl+Shift+X hides it at once. ' +
     'The dashboard has Saved, Map, Folders, and Settings. Saved holds kept walkthroughs, routines, and notes. ' +
-    'Add a TypeSafe key for Jev and a Gemini key for answers in Settings. Claude Code or an Anthropic key can provide pointing. ' +
+    keysGuide() + ' ' +
     'The tray opens the dashboard and has Quit. Closing the dashboard leaves the Knot and hotkeys running. There is no plan source yet.';
 }
 
