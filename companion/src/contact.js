@@ -45,7 +45,7 @@ const WORDS = {
     ? 'Leave your email and Pranav writes to you when there is news. Nothing else, and no account. It is kept with this computer\'s install id so he can see which version you are on. Ask any time and it is deleted.'
     : 'Leave your email and Pranav writes to you when there is news. Nothing else, and no account. It is kept apart from your usage stats. Ask any time and it is deleted.',
   cardButton: 'Keep me posted',
-  cardPlaceholder: 'you@school.edu',
+  cardPlaceholder: 'Your email',
 };
 
 function pad(n) { return String(n).padStart(2, '0'); }

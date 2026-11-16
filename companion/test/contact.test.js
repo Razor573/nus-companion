@@ -71,6 +71,17 @@ test('an address is checked the way the site and the server check it', () => {
   for (const bad of ['', 'sam', 'sam@', 'sam@school', 'sam @school.edu', '@school.edu', 'a'.repeat(195) + '@x.com']) assert.equal(cleanEmail(bad), '', bad);
 });
 
+test('any normal address is accepted, and no email box asks for a school one', () => {
+  for (const ok of ['sam@gmail.com', 'sam.lee+nus@outlook.com', 'sam@proton.me', 'sam@mail.example.co.uk', 'sam@school.edu']) assert.equal(cleanEmail(ok), ok, ok);
+  // Every word the update card and the Knot show, and every email box the dashboard draws.
+  for (const [key, text] of Object.entries(WORDS)) assert.doesNotMatch(String(text), /\.edu\b|school|student|universit|college/i, key);
+  const home = read('companion/home/index.html');
+  const boxes = home.match(/<input[^>]*type="email"[^>]*>/g) || [];
+  assert.ok(boxes.length >= 2, 'the feedback box and the update box are both there');
+  for (const box of boxes) assert.doesNotMatch(box, /\.edu\b|school|student|universit|college/i, box);
+  assert.match(home, /id="feedback-email"[^>]*placeholder="Your email"/);
+});
+
 test('a bad address saves nothing and the ask stays', async () => {
   const r = rig();
   r.contact.noteWin(); r.clock.t += WAIT_AFTER_WIN_MS;
