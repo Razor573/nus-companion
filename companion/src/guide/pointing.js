@@ -156,6 +156,11 @@ function validatePoint(reply, elements, opts = {}) {
     const img = opts.image;
     if (img && img.width > 0 && img.height > 0 && [x, y, w, h].every((v) => v >= 0) && [x, y, w, h].some((v) => v > 1.5) && w > 1.5 && h > 1.5) {
       x /= img.width; w /= img.width; y /= img.height; h /= img.height; pixels = true;
+    } else if (img && img.width > 0 && img.height > 0 && [x, y, w, h].every((v) => v >= 0) && (x > 1.5 || y > 1.5) && x <= img.width && y <= img.height && w <= 1 && h <= 1) {
+      // Half and half: the corner in pixels, the size already in fractions
+      // ("[POINT:1117,148,0.06,0.025]" for MDN's Theme button, publik-fast
+      // 2026-11-15, 5 of 168 replies). Convert the corner only.
+      x /= img.width; y /= img.height; pixels = true;
     }
     // A box that pokes a hair past the screen edge (a taskbar button, a menu
     // at the very top) is the model rounding, not a miss: trim it to the edge.
