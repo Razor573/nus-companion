@@ -10,7 +10,9 @@
 
   const LEAVE_MS = 6000;   // the pointer gone this long, and it folds
 
-  function create({ doc, options, read, write, action, place, onChange, setTimer, clearTimer }) {
+  // canPlay (optional): true when the Knot is free to play right now. The
+  // "Shoot hoops" row (renderer/play.js) shows only then, never mid-task.
+  function create({ doc, options, read, write, action, place, onChange, setTimer, clearTimer, canPlay }) {
     const later = setTimer || ((fn, ms) => setTimeout(fn, ms));
     const cancel = clearTimer || ((t) => clearTimeout(t));
     const state = { open: false, source: 'knot', settings: null, leave: null };
@@ -50,6 +52,14 @@
         row.appendChild(make('span', '', o.label));
         row.appendChild(make('u'));
         row.addEventListener('click', () => change(options.patchFor(o, !options.isOn(o, state.settings || {}))));
+        el.appendChild(row);
+      }
+      if (canPlay && canPlay()) {
+        const row = make('button', 'm-row', 'Shoot hoops');
+        row.type = 'button';
+        row.dataset.action = 'play';
+        row.setAttribute('role', 'menuitem');
+        row.addEventListener('click', () => { close(); action('play'); });
         el.appendChild(row);
       }
       el.appendChild(make('div', 'm-sep'));

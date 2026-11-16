@@ -40,10 +40,7 @@ const ASKS = [
   ['sheet', 'summarize', 'summarize this', 'club budget items and payers; the total misses the speaker gift'],
 ];
 const POINT_ASKS = [['article', 'summarize what is going on here'], ['dialog', 'what do you see here']];
-// --tiers publik-fast runs one tier only (a prompt retest needs only the tier that changed, and
-// publik-smart is about 22 times the cost per ask). --skip-pointing leaves the two pointing asks out.
-const TIERS = (arg('--tiers') || 'publik-fast,publik-smart').split(',').map((s) => s.trim()).filter((s) => /^publik-(fast|balanced|smart)$/.test(s));
-if (process.argv.includes('--skip-pointing')) POINT_ASKS.length = 0;
+const TIERS = ['publik-fast', 'publik-smart'];
 
 async function main() {
   const publik = require('../../src/publik');

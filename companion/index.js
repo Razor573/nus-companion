@@ -1523,6 +1523,8 @@ function updateTrayMenu() {
     // The Knot is dragged wherever it should live; this sends it to a corner
     // from here, for when it is out of reach or under something.
     { label: 'Move Knot to', submenu: [['tl', 'Top left'], ['tr', 'Top right'], ['bl', 'Bottom left'], ['br', 'Bottom right']].map(([corner, label]) => ({ label, click: () => moveKnot({ corner }) })) },
+    // Hoops (renderer/play.js). The overlay says no while a task is on.
+    ...(islandOn() ? [] : [{ label: 'Shoot hoops with the Knot', click: () => send('play:start', {}) }]),
     { label: 'Island mode (top bar)', type: 'checkbox', checked: islandOn(), click: () => applySettingsPatch({ knotIsland: !islandOn() }) },
     { label: 'Hidden from screen sharing', type: 'checkbox', checked: captureHidden(), enabled: !(process.env.JARVIS_NO_PROTECT || process.env.NUS_NO_PROTECT), click: () => applySettingsPatch({ hideFromCapture: !captureHidden() }) },
     { label: 'Open the dashboard', click: () => { if (hooks.showDesktop) hooks.showDesktop(); } },

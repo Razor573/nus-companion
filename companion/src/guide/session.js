@@ -62,18 +62,6 @@ function jevElements(list, fg) {
   }));
 }
 
-// [DONE] ends the walk only when there is nothing left to click. The model
-// also writes [DONE] on the one click that finishes the goal ("Click the Night
-// light toggle to turn it on. [POINT:21] [DONE]"): measured 2026-11-15 on
-// publik-fast, 38 of 168 guide replies did this and 30 of them named the right
-// control, which the app then dropped. Such a reply is pointed at; the next
-// step's fresh screenshot ends the walk.
-const ALREADY = /\b(?:already|is now|are now|you're all set|you are all set|all done)\b/i;
-function endsHere(reply) {
-  if (!reply || !reply.done) return false;
-  return !reply.target || noClickLine(reply.instruction) || ALREADY.test(String(reply.instruction || ''));
-}
-
 function withTimeout(promise, ms, label) {
   let t;
   const timeout = new Promise((_, reject) => { t = setTimeout(() => reject(new Error(label + ' timed out')), ms); if (t.unref) t.unref(); });
@@ -567,7 +555,7 @@ class GuideSession {
     if (question && v.reply && !v.reply.target && (!v.reply.done || noClickLine(v.reply.instruction))) return { kind: 'answer', why: 'nothing to click' };
     if (!v.ok || !v.reply) return { kind: 'explain', why: 'invalid', text: 'I could not work out the next step from this screen. Tell me a little more, or open the app first.' };
     const reply = v.reply;
-    if (endsHere(reply)) return { kind: 'finish', text: reply.instruction, reply };
+    if (reply.done) return { kind: 'finish', text: reply.instruction, reply };
     if (!reply.target) return { kind: 'explain', why: 'null', text: reply.instruction + (reply.note ? ' ' + reply.note : ''), reply };
 
     // Reconcile with Windows before anything moves.
@@ -687,7 +675,7 @@ class GuideSession {
     let outcome = { kind: 'explain', why: 'fail' };
     if (!m.err) {
       const v = validatePoint(parsePointReply(m.raw), ctx.elements, { verified: !!ctx.probe, image: ctx.cap && { width: ctx.cap.width, height: ctx.cap.height } });
-      if (v.ok && v.reply) outcome = endsHere(v.reply) ? { kind: 'finish', reply: v.reply } : v.reply.target ? { kind: 'point', reply: v.reply } : { kind: 'explain', why: 'null', reply: v.reply };
+      if (v.ok && v.reply) outcome = v.reply.done ? { kind: 'finish', reply: v.reply } : v.reply.target ? { kind: 'point', reply: v.reply } : { kind: 'explain', why: 'null', reply: v.reply };
       else outcome = { kind: 'explain', why: 'invalid' };
     }
     const verdict = outcome.kind === 'point' ? (this.sameControl(outcome, prov, ctx) ? 'agree' : 'disagree') : (outcome.why === 'fail' || outcome.why === 'invalid') ? 'unknown' : 'disagree';
@@ -868,4 +856,4 @@ class GuideSession {
   clearExplain() { if (this.explainTimer) { clearTimeout(this.explainTimer); this.explainTimer = null; } }
 }
 
-module.exports = { GuideSession, MAX_STEPS, SETTLE_MS, SETTLE_AFTER_CLICK_MS, FAST_PREV_MS, endsHere };
+module.exports = { GuideSession, MAX_STEPS, SETTLE_MS, SETTLE_AFTER_CLICK_MS, FAST_PREV_MS };
