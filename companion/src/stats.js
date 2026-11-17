@@ -82,6 +82,9 @@ const SURFACES = ['bubble', 'card'];
 const NOTICE_ID = /^n[0-9]{1,6}$/;
 const TIMEOUT_MS = 4000;
 const DAY_CHECK_MS = 15 * 60 * 1000;
+// A hello or an engaged that got no answer: asked again this soon, once, then at each day check.
+const RETRY_MS = 45 * 1000;
+const ENGAGED_RETRY_MS = 60 * 1000;
 const PROPS_MAX_BYTES = 1024;
 const CRASHES_PER_PROCESS = 3;
 // Session length (contract amendment 2026-10-15 b, renamed app_session in (c)):
@@ -138,6 +141,7 @@ function cleanProps(props) {
  * @param {Function} [o.fetch]       global fetch by default
  * @param {() => number} [o.now]
  * @param {Function} [o.setInterval] for tests
+ * @param {Function} [o.setTimeout]  for tests (the one short retry after a send that got no answer)
  * @param {() => number} [o.idleSeconds]  system idle time (powerMonitor.getSystemIdleTime); absent = every minute counts
  * @param {boolean} [o.dev]          force the dev flag (tests); otherwise NUS_STATS_DEV=1 or <userData>/dev-install.txt
  */
@@ -145,7 +149,8 @@ function createStats(o) {
   const env = o.env || process.env;
   const fetchFn = o.fetch || globalThis.fetch;
   const now = o.now || Date.now;
-  const timers = { setInterval: o.setInterval || setInterval, clearInterval: o.clearInterval || clearInterval };
+  const timers = { setInterval: o.setInterval || setInterval, clearInterval: o.clearInterval || clearInterval,
+    setTimeout: o.setTimeout || setTimeout, clearTimeout: o.clearTimeout || clearTimeout };
   const platform = o.platform || process.platform;
   const idFile = path.join(o.userData, 'install_id.txt');
   const stateFile = path.join(o.userData, 'stats-state.json');
@@ -159,7 +164,12 @@ function createStats(o) {
   let activeMinutes = 0;
   let firstAskInFlight = false;
   let firstWinInFlight = false;
-  let engagedTried = '';
+  // Rows that got no answer and are still owed today (see open and engaged).
+  let openOwed = null;
+  let engagedOwed = '';
+  let engagedTriedAt = 0;
+  let engagedInFlight = false;
+  let retryTimer = null;
   let crashesSent = 0;
   // The sign-in door in this process, and the rows the server refused this run.
   let gate = null;
@@ -345,18 +355,37 @@ function createStats(o) {
     if (!minuteTimer) { minuteTimer = timers.setInterval(() => { minute(); }, MINUTE_MS); if (minuteTimer && typeof minuteTimer.unref === 'function') minuteTimer.unref(); }
   }
   async function open(via) {
-    lastOpenDay = utcDay(now());
+    const day = utcDay(now());
+    lastOpenDay = day;
     // A first ask that never reached the server (offline at the time) is
     // tried again by the next ask, so nothing to do here; first_run_end and
     // the steps retry the same way, at their own next trigger.
     // The day check's hello carries no via: nothing was launched.
-    return track('app_open', { ...(via ? { via } : {}), nudge_group: nudgeGroup() });
+    const r = await track('app_open', { ...(via ? { via } : {}), nudge_group: nudgeGroup() });
+    // No answer from the server (a lid just opened and Wi-Fi is not back, a
+    // start at sign-in before the network): today's hello is still owed. Until
+    // 0.1.29 the day was marked done here and never said again, so such a day
+    // read as "the app was not running". Asked again shortly, then at each day
+    // check, with the same via.
+    if (r.sent || !enabled()) openOwed = null;
+    else { openOwed = { day, via }; retrySoon(); }
+    return r;
+  }
+  // One short timer after a miss: the network is usually back within seconds,
+  // and a short session can end before the 15 minute check comes round.
+  function retrySoon() {
+    if (retryTimer) return;
+    retryTimer = timers.setTimeout(() => { retryTimer = null; tick(); }, RETRY_MS);
+    if (retryTimer && typeof retryTimer.unref === 'function') retryTimer.unref();
   }
   // A new UTC day: report the minutes so far under the old day, then say hello.
+  // The same day: only what is still owed (a hello or an engaged that got no answer).
   async function tick() {
-    if (utcDay(now()) === lastOpenDay) return { sent: false, status: 0 };
-    await flushSession();
-    return open();
+    const day = utcDay(now());
+    if (day !== lastOpenDay) { await flushSession(); const r = await open(); owedEngaged(day); return r; }
+    owedEngaged(day);
+    if (openOwed && openOwed.day === day) return open(openOwed.via);
+    return { sent: false, status: 0 };
   }
   function minute() {
     let idle = 0;
@@ -402,14 +431,25 @@ function createStats(o) {
   }
   // The person did something with Nus today (an ask, the talk key, the tray,
   // the dashboard): once per UTC day. Unlike app_open, a Knot left running and
-  // untouched never says this. One try per process per day; a miss waits for
-  // the next action.
+  // untouched never says this. One at a time. A miss (no answer from the
+  // server) is owed: the next action or the day check says it, at most once a
+  // minute. Until 0.1.29 a miss used up the day's one try, so a first action
+  // made offline lost the whole day.
   function engaged() {
     const day = utcDay(now());
-    if (st().engagedDay === day || engagedTried === day) return Promise.resolve({ sent: false, status: 0 });
-    engagedTried = day;
-    return track('engaged').then(r => { if (r.sent) remember({ engagedDay: day }); return r; });
+    if (st().engagedDay === day || engagedInFlight || !enabled()) return Promise.resolve({ sent: false, status: 0 });
+    if (engagedOwed === day && now() - engagedTriedAt < ENGAGED_RETRY_MS) return Promise.resolve({ sent: false, status: 0 });
+    engagedInFlight = true;
+    engagedTriedAt = now();
+    return track('engaged').then(r => {
+      engagedInFlight = false;
+      if (r.sent) { engagedOwed = ''; remember({ engagedDay: day }); } else { engagedOwed = day; retrySoon(); }
+      return r;
+    });
   }
+  // The day check's part: an engaged that got no answer today is said again.
+  // Never on its own: only a day the person really acted on is owed.
+  function owedEngaged(day) { if (engagedOwed === day) engaged(); else if (engagedOwed) engagedOwed = ''; }
   // How answers are possible here, once per install.
   function aiReady(p) {
     if (!AI_PATHS.includes(p) || st().aiReadySent) return Promise.resolve({ sent: false, status: 0 });
@@ -513,6 +553,7 @@ function createStats(o) {
   function stop() {
     if (dayTimer) { timers.clearInterval(dayTimer); dayTimer = null; }
     if (minuteTimer) { timers.clearInterval(minuteTimer); minuteTimer = null; }
+    if (retryTimer) { timers.clearTimeout(retryTimer); retryTimer = null; }
     const settle = new Promise(resolve => { const t = setTimeout(resolve, 1200, { sent: false, status: 0 }); if (t && typeof t.unref === 'function') t.unref(); });
     const sends = [...openFeatures].map(stopper => stopper());
     // Quit with the sign-in door still shut: that is signin_closed, written to

@@ -27,7 +27,13 @@ if (!app.requestSingleInstanceLock()) { app.quit(); return; }
 // with a lag-on.txt in the profile. It wraps IPC and timers, so it goes in before anything registers.
 require('../companion/src/lag').install({ version: app.isPackaged ? app.getVersion() : 'dev' });
 let home = null, companion = null, folders = null, databaseReady = false;
-app.on('second-instance', () => { if (app.isReady()) { openHome(); try { stats.engaged(); } catch (_) { /* stats may not exist yet */ } } });
+const { createAutostart, isLoginLaunch } = require('./autostart');
+// A second copy the person started (the shortcut, with Nus already in the tray) opens the dashboard
+// and is a real action. One that Windows started at sign-in is neither: it is ignored (src/autostart.js).
+app.on('second-instance', (_event, argv) => {
+  if (isLoginLaunch(argv)) return;
+  if (app.isReady()) { openHome(); try { stats.engaged(); } catch (_) { /* stats may not exist yet */ } }
+});
 const crashHandlers = require('./crash').installCrashHandlers(app, dialog);
 const { createQuitGuard } = require('./quit-guard');
 const companionApp = require('../companion');
@@ -266,12 +272,10 @@ function adoptLegacyAnthropicKey() {
   const legacy = secrets.getSecret('anthropic_api_key');
   if (legacy) store.setSettings({ apiKeys: { anthropic: legacy } });
 }
-// Start with Windows: a login item that runs this exe with --autostart. Only a
-// packaged build registers one; a dev run would register electron.exe.
-function applyAutostart(on) {
-  if (!app.isPackaged || process.platform !== 'win32') return;
-  try { app.setLoginItemSettings({ openAtLogin: !!on, path: process.execPath, args: ['--autostart'] }); } catch (e) { console.log('[autostart] ' + e.message); }
-}
+// Start with Windows: a login item that runs this exe with --autostart, under one fixed name
+// (src/autostart.js). Only a packaged build registers one; a dev run would register electron.exe.
+const autostart = createAutostart({ app, log: m => console.log(m) });
+function applyAutostart(on) { autostart.apply(on); }
 function settingsPatch(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid settings.');
   const clean = {};
@@ -364,6 +368,14 @@ function registerHomeIpc() {
   // The first window paints the stats notice: one step, counted once.
   // Who answers, publik or the person's own key (Settings, Keys). Only in a publik build.
   handle('home:publik:choice', (choice) => { if (publik) { publik.setChoice(String(choice || '')); stats.aiSource(publik.choice()); } return { choice: publik ? publik.choice() : null }; });
+  // Which publik account this computer is signed in as, and the way out of it (Settings, Keys).
+  // Signing out forgets this computer's publik key and starts Nūs again, at Sign in with publik.
+  handle('home:publik:who', async () => (publik ? publik.who() : null));
+  handle('home:publik:signout', () => {
+    if (!publik || !publik.signOut()) return { ok: false };
+    setTimeout(() => { app.relaunch(); app.quit(); }, 900);
+    return { ok: true };
+  });
   handle('home:status', async () => ({ ...companion.status(), ai: await ai.status(), llmReady: createLLM(store.getSettings()).ready, publik: publik ? { on: true, choice: publik.choice() } : { on: false }, version: companionVersion(),
     ...(stats.status().firstRun ? (stats.onboardingStep('stats_notice_seen'), {}) : {}),
     hotkeys: { ptt: companion.status().ptt.accelerator, assist: store.getSettings().shortcuts.assist, ...(process.platform === 'darwin' ? { select: 'Control+Shift+T', toggle: 'Control+Shift+Space', panic: 'Control+Shift+X' } : { select: 'Ctrl+Shift+T', toggle: 'Ctrl+Shift+Space', panic: 'Ctrl+Shift+X' }) },
@@ -680,7 +692,9 @@ app.whenReady().then(async () => {
   if (firstRun && !SMOKE && process.env.NUS_HELLO !== '0') setTimeout(() => { try { companion.helloFirstRun(); } catch (e) { console.log('[hello] ' + e.message); } }, 4000);
   // A chosen start-with-Windows is written again at each start, so it stays as
   // set and follows the exe if an update moved it (Clicky 1.0.50 had to fix exactly this).
+  // The second item older versions left under Electron's default name goes at every start, chosen or not.
   if (!SMOKE && typeof store.getSettings().startWithWindows === 'boolean') applyAutostart(store.getSettings().startWithWindows);
+  else if (!SMOKE) autostart.cleanup();
   // Windows ties notifications to this id (the build's appId). (stats.boot now runs at the top,
   // before the sign-in gate.)
   if (process.platform === 'win32') { try { app.setAppUserModelId('com.nus.companion'); } catch (_) { /* notifications only */ } }

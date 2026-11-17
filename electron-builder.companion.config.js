@@ -15,14 +15,14 @@ module.exports = {
   appId: 'com.nus.companion',
   productName: 'Nus Companion',
   copyright: base.copyright,
-  extraMetadata: { name: 'nus-companion', version: '0.1.29', main: 'src/main-companion.js', publik: PUBLIK,
+  extraMetadata: { name: 'nus-companion', version: '0.1.30', main: 'src/main-companion.js', publik: PUBLIK,
     description: 'Nūs Companion: the Knot that hears you and acts, on its own.' },
   directories: { output: 'dist-companion', buildResources: 'build' },
   // companion/** carries companion/src/stats.js (anonymous usage stats, plain
   // fetch, no SDK); @supabase and electron-updater stay out of this build.
   // src/license.js (no requires) reads the optional account's plan.
   files: ['companion/**/*', 'src/main-companion.js', 'src/ai.js', 'src/claude-pool.js', 'src/secrets.js', 'src/stt-local.js', 'src/whisper-server.js',
-    'src/crash.js', 'src/quit-guard.js', 'src/db.js', 'src/license.js', 'package.json',
+    'src/crash.js', 'src/quit-guard.js', 'src/autostart.js', 'src/db.js', 'src/license.js', 'package.json',
     '!**/*.test.js', '!**/*.bak-*', '!companion/test/**', '!docs/**', '!scripts/**', '!supabase/**',
     // Developer-only checks and the unused 3D Knot stay out of the asar.
     '!companion/verify-focus-guard.cjs', '!companion/renderer/knot3d.js',

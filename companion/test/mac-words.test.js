@@ -138,7 +138,10 @@ test('a Mac is never offered start-at-login, which only works on Windows', () =>
   const fn = src.slice(src.indexOf('function rtTryAutostart('), src.indexOf('function rtTryAutostart(') + 300);
   assert.match(fn, /if \(IS_MAC\) \{ rtAutostartPending = false; return false; \}/);
   const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main-companion.js'), 'utf8');
-  assert.match(main, /if \(!app\.isPackaged \|\| process\.platform !== 'win32'\) return;/, 'applyAutostart is still Windows only');
+  // Since 0.1.30 the login item lives in src/autostart.js, which only acts on a packaged Windows build.
+  assert.match(main, /const autostart = createAutostart\(\{ app, log: /);
+  const as = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'autostart.js'), 'utf8');
+  assert.match(as, /const live = \(\) => !!app\.isPackaged && platform === 'win32';/, 'start-at-login is still Windows only');
 });
 
 test('the Mac tour says hold and let go, with Mac key names', () => {

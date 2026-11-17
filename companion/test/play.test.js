@@ -273,3 +273,10 @@ test('one game, started on purpose: the menu row, the tray item, and a task alwa
   // Nothing of the game is made before the first game.
   assert.match(r, /function makePlay\(\) \{\n    if \(play \|\| !window\.NusPlay\) return play;/);
 });
+
+test('with Reduce motion on, Shoot hoops stays in the menu and says why there is no game', () => {
+  const r = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  assert.match(r, /canPlay: \(\) => \{ const why = playBlocker\(\); return why === '' \|\| why === 'reduced-motion'; \}/);
+  assert.match(r, /if \(why === 'reduced-motion'\) showHint\(\{ text: nus\.platform === 'darwin' \? 'Hoops needs motion\. Turn off Reduce motion/);
+  assert.match(r, /'Hoops needs motion\. Turn on Animation effects in Settings > Accessibility > Visual effects to play\.'/);
+});

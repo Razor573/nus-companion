@@ -7,6 +7,7 @@
 // electron-builder.companion.config.js. Off (or this folder left out of the build), the
 // Companion starts with no gate and no publik provider, exactly like 0.1.16.
 // NUS_PUBLIK=1 turns it on for a development start; nothing turns it off in a publik build.
+const fs = require('fs');
 const path = require('path');
 const mod = require('./publik');
 
@@ -23,6 +24,34 @@ function setChoice(c) { mod.setChoice(c === 'publik' || c === 'own_key' ? c : nu
 // Signed in with publik on this computer, and answering with an own key or Claude Code: the
 // person can move to publik in one tap when that key stops working (0.1.22).
 function canSwitch() { return on() && !process.env.PUBLIK_API_KEY && !!mod.readCredential() && choice() !== 'publik'; }
+
+// Who publik says this computer is signed in as. null when publik cannot be reached or nobody is signed in.
+// -> { handle: '@name' | '', claimed: boolean }
+async function who() {
+  if (!on()) return null;
+  const c = mod.readCredential();
+  if (!c) return null;
+  try {
+    const r = await mod.readWallet(c.key);
+    if (!r.wallet) return null;
+    const h = r.wallet.account && r.wallet.account.handle;
+    return { handle: h ? '@' + String(h).replace(/^@/, '').slice(0, 60) : '', claimed: r.wallet.claim_state === 'claimed' };
+  } catch (_) { return null; }
+}
+// Sign this computer out of publik: its key is forgotten, so the next start sets the computer up
+// again and shows "Sign in with publik". Which account that becomes is decided in the browser, so
+// a person who wants another account signs out of publikhq.com there first. A key from the
+// environment (development) is not ours to forget. (2026-11-16: a tester's Mac stayed signed in to
+// the developer's account, with no way out but deleting the file by hand.)
+function signOut() {
+  if (!on() || process.env.PUBLIK_API_KEY) return false;
+  const file = mod.credentialPath();
+  try {
+    if (!fs.existsSync(file)) return true;
+    fs.writeFileSync(file, '{}', { mode: 0o600 });
+    return mod.readCredential() === null;
+  } catch (_) { return false; }
+}
 
 // Which tier answers. Everyday asks and the Smart switch; a vendor model name is never sent.
 const TIERS = { fast: mod.MODELS.fast, smart: mod.MODELS.smart, hands: mod.MODELS.balanced };
@@ -69,4 +98,4 @@ function errorLine(e) {
   return '';
 }
 
-module.exports = { on, active, choice, provider, setChoice, canSwitch, model, TIERS, prepareImage, readError, errorLine, FREE_WEEK_402, MAX_IMAGE_CHARS, module: mod };
+module.exports = { on, active, choice, provider, setChoice, canSwitch, who, signOut, model, TIERS, prepareImage, readError, errorLine, FREE_WEEK_402, MAX_IMAGE_CHARS, module: mod };

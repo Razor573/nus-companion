@@ -2179,6 +2179,9 @@
     if (why) {
       nus.log('[play] not now: ' + why);
       if (why === 'busy') showHint({ text: 'Let me finish this first, then we can play.', ms: 2600 });
+      // The game stays off with the system's reduce-motion setting on; say so
+      // instead of doing nothing (the Mac CI runner has it on, 2026-11-16).
+      if (why === 'reduced-motion') showHint({ text: nus.platform === 'darwin' ? 'Hoops needs motion. Turn off Reduce motion in System Settings > Accessibility > Display to play.' : 'Hoops needs motion. Turn on Animation effects in Settings > Accessibility > Visual effects to play.', ms: 6000 });
       return false;
     }
     if (!makePlay()) return false;
@@ -3214,7 +3217,8 @@
     read: () => (nus.settingsGet ? nus.settingsGet() : null),
     write: (patch) => nus.settingsSet(patch),
     action: (id) => { if (id === 'play') { startPlay(); return; } nus.guideAsk({ action: id }); },
-    canPlay: () => playBlocker() === '',
+    // Reduce motion on: the row stays, and picking it says why there is no game.
+    canPlay: () => { const why = playBlocker(); return why === '' || why === 'reduced-motion'; },
     place: placeMenu,
     onChange: (open) => {
       nus.guideAsk({ action: 'task-panel', menu: true, open: open || !!(taskPanel && taskPanel.open) });

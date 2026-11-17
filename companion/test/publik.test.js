@@ -120,3 +120,44 @@ function restore(saved) {
   if (saved.a === undefined) delete process.env.NUS_PUBLIK; else process.env.NUS_PUBLIK = saved.a;
   if (saved.k === undefined) delete process.env.PUBLIK_API_KEY; else process.env.PUBLIK_API_KEY = saved.k;
 }
+
+// 2026-11-16: a tester's Mac stayed signed in to the developer's publik account, and the only way
+// out was deleting a file by hand. Settings, Keys now says who is signed in and signs out.
+test('signing out of publik forgets this computer\'s key and nothing else', () => {
+  const { spawnSync } = require('child_process');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-publik-'));
+  const script = `
+    const fs = require('fs'), path = require('path');
+    const p = require(${JSON.stringify(path.join(ROOT, 'companion', 'src', 'publik'))});
+    const file = p.module.credentialPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ key: 'pk_test_abcdef', install_id: 'i1', choice: 'publik' }));
+    const other = path.join(path.dirname(file), 'other-app.json'); fs.writeFileSync(other, '{"key":"pk_other"}');
+    const before = !!p.module.readCredential(), activeBefore = p.active();
+    const ok = p.signOut();
+    console.log(JSON.stringify({ before, activeBefore, ok, after: p.module.readCredential(), activeAfter: p.active(), choice: p.choice(), otherKept: fs.readFileSync(other, 'utf8'), again: p.signOut() }));
+  `;
+  const env = { ...process.env, NUS_PUBLIK: '1', LOCALAPPDATA: dir, XDG_CONFIG_HOME: dir, HOME: dir, USERPROFILE: dir };
+  delete env.PUBLIK_API_KEY;
+  const r = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.deepEqual(out, { before: true, activeBefore: true, ok: true, after: null, activeAfter: false, choice: null, otherKept: '{"key":"pk_other"}', again: true });
+  // A key handed in by the environment (development) is not ours to forget.
+  const dev = spawnSync(process.execPath, ['-e', `const p = require(${JSON.stringify(path.join(ROOT, 'companion', 'src', 'publik'))}); console.log(p.signOut());`], { env: { ...env, PUBLIK_API_KEY: 'pk_env' }, encoding: 'utf8' });
+  assert.equal(dev.stdout.trim(), 'false');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Settings, Keys names the publik account and signs out in two taps, then Nūs restarts', () => {
+  const main = read('src/main-companion.js'), html = read('companion/home/index.html'), js = read('companion/home/home.js'), pre = read('companion/home/preload.js');
+  assert.match(main, /handle\('home:publik:who', async \(\) => \(publik \? publik\.who\(\) : null\)\);/);
+  assert.match(main, /handle\('home:publik:signout', \(\) => \{\s*if \(!publik \|\| !publik\.signOut\(\)\) return \{ ok: false \};\s*setTimeout\(\(\) => \{ app\.relaunch\(\); app\.quit\(\); \}, 900\);/);
+  assert.match(pre, /publikWho: \(\) => invoke\('publik:who'\), publikSignOut: \(\) => invoke\('publik:signout'\)/);
+  assert.match(html, /id="publik-signout" class="quiet" type="button">Sign out of publik</);
+  assert.match(html, /sign out of publikhq\.com in your browser first/);
+  // The first tap only says what will happen; the second one signs out.
+  assert.match(js, /if\(e\.currentTarget\.dataset\.armed!=='1'\)\{publikSignOutArmed\(true\);return;\}/);
+  assert.match(js, /'Signed in with publik as '\+w\.handle\+'\.'/);
+});

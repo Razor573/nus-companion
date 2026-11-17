@@ -209,7 +209,7 @@
     }
     $('#cli-state').textContent=status.ai.cli?'Found':'Not found';$('#cli-state').classList.toggle('set',!!status.ai.cli);
     $('#claude-status').textContent=status.ai.cli?'Claude Code is installed. If it is signed in, it answers and points with no key.':'Not installed. Not needed if you have a Gemini, Nvidia or Anthropic key.';
-    const pub=status.publik||{on:false},viaPublik=!!(pub.on&&pub.choice==='publik');$('#publik-row').hidden=!pub.on;$('#use-own-key').checked=!viaPublik;
+    const pub=status.publik||{on:false},viaPublik=!!(pub.on&&pub.choice==='publik');$('#publik-row').hidden=!pub.on;$('#use-own-key').checked=!viaPublik;paintPublikAccount(pub);
     // Voice commands run on the built-in rules with no key (src/reflex/rules.js), so this step is
     // never "Not set". A saved TypeSafe key is named beside it; it is optional.
     const answersOk=!!(viaPublik||s.keys.gemini||s.keys.nvidia||s.keys.anthropic||status.ai.cli);
@@ -416,6 +416,20 @@
     }catch(err){$('#mic-note').textContent=NM.failLine(err&&err.name);}
   };
   if(navigator.mediaDevices&&navigator.mediaDevices.addEventListener)navigator.mediaDevices.addEventListener('devicechange',()=>{setTimeout(()=>fillMics(),400);});
+  // Which publik account this is, and the way out. Sign out is two taps: the first says what happens.
+  let publikWhoAt=0;
+  function paintPublikAccount(pub){
+    $('#publik-account').hidden=!pub.on;
+    if(!pub.on||!api.publikWho||Date.now()-publikWhoAt<60000)return;
+    publikWhoAt=Date.now();
+    api.publikWho().then(w=>{$('#publik-who').textContent=w&&w.handle?'Signed in with publik as '+w.handle+'.':w&&w.claimed===false?'Not signed in to publik yet.':'Signed in with publik.';}).catch(()=>{});
+  }
+  function publikSignOutArmed(v){$('#publik-signout-hint').hidden=!v;$('#publik-signout-cancel').hidden=!v;$('#publik-signout').textContent=v?'Sign out and restart Nūs':'Sign out of publik';$('#publik-signout').dataset.armed=v?'1':'';}
+  $('#publik-signout-cancel').onclick=()=>publikSignOutArmed(false);
+  $('#publik-signout').onclick=e=>{
+    if(e.currentTarget.dataset.armed!=='1'){publikSignOutArmed(true);return;}
+    run(async()=>{const r=await api.publikSignOut();if(r&&r.ok)notice('Signed out of publik. Nūs is restarting.');else{publikSignOutArmed(false);notice('Could not sign out of publik on this computer.',true);}},e.currentTarget);
+  };
   $('#use-own-key').onchange=e=>run(async()=>{await api.publikChoice(e.target.checked?'own_key':'publik');await settings();notice(e.target.checked?'Saved. Your own key or Claude Code answers now.':'Saved. publik answers now.');},e.target);
   const fields={'open-mic':['openMic',e=>e.checked],'speak-replies-home':['speakReplies',e=>e.checked],'sounds':['sounds',e=>e.checked],'channel-messages':['channelMessages',e=>e.checked],'start-with-windows':['startWithWindows',e=>e.checked],'focus-guard':['focusGuard',e=>e.checked],'hands':['hands',e=>e.checked],'tasks':['tasks',e=>e.checked],'knot-island':['knotIsland',e=>e.checked],'focus-feeds':['focusGuardFeeds',e=>e.value.split(',').map(x=>x.trim()).filter(Boolean)],'hide-from-capture':['hideFromCapture',e=>e.checked],'persist-transcripts-home':['persistTranscripts',e=>e.checked],'save-audio-home':['saveAudio',e=>e.checked],'retention-days':['audioRetentionDays',e=>Number(e.value)],'knot-display':['knotDisplayId',e=>e.value?Number(e.value):null]};
   for(const [id,[key,value]] of Object.entries(fields))$('#'+id).onchange=e=>run(async()=>{await api.settingsSet({[key]:value(e.target)});notice('Saved.');},e.target);
