@@ -42,7 +42,9 @@ const FIRST_WINS = [
 ];
 function firstWins(caps = {}) {
   const ai = !!(caps.keyReady || caps.cli);
-  return FIRST_WINS.filter((w) => ai || !w.ai).slice(0, 3);
+  // The feed guard reads window titles through the Windows probe, so a Mac does not offer it.
+  const winOnly = caps.mac ? new Set(['feeds', 'homework_start']) : new Set();
+  return FIRST_WINS.filter((w) => (ai || !w.ai) && !winOnly.has(w.struggle)).slice(0, 3);
 }
 const GUIDE_DEMO_LINE = 'This is Settings. Keys, your voice and Hands live here.';
 // Card 8's suggested question fits the window in front (live 2026-11-03: "Where
@@ -127,8 +129,15 @@ function keyCheck(text) {
 }
 
 // 'Control+Alt' -> ['Ctrl', 'Alt']
-function keycaps(accelerator) {
-  return String(accelerator || 'Control+Alt').split('+').map((k) => k.trim()).filter(Boolean).map((k) => (/^(commandorcontrol|control|ctrl)$/i.test(k) ? 'Ctrl' : /^return$/i.test(k) ? 'Enter' : k));
+function keycaps(accelerator, mac = false) {
+  return String(accelerator || 'Control+Alt').split('+').map((k) => k.trim()).filter(Boolean).map((k) => (/^(control|ctrl)$/i.test(k) ? (mac ? 'Control' : 'Ctrl') : !mac && /^commandorcontrol$/i.test(k) ? 'Ctrl'
+    : mac && /^commandorcontrol$/i.test(k) ? 'Command' : mac && /^alt$/i.test(k) ? 'Option' : /^return$/i.test(k) ? 'Enter' : k));
+}
+// The Mac beta has no microphone card (macOS asks for the microphone on the first press of the
+// talk key, not on a card at launch) and no Hands card (Windows only).
+function skipStep(step, caps = {}) {
+  if (!caps.mac) return false;
+  return step === STEP.mic || step === STEP.hands;
 }
 const continueActions = (disabled) => [{ id: 'tour-next', label: 'Continue', primary: true, disabled: !!disabled }];
 // A waiting Continue lights by itself after this long, so no card can hold the tour hostage (friend
@@ -173,16 +182,18 @@ function card(step, info = {}) {
   // No progress line for the voice download on the cards: it is not the person's business on a first run.
   const base = { step, of: OF, skip: step < OF, note: '', progress: null };
   if (step === STEP.hello) {
-    const typed = caps.helloTyped !== false;
+    // "That was me" only once something was really typed: the card can be drawn while the hello is still
+    // running (a second start of the tour), and a hello that typed nothing must not claim it (a tester, 2026-11-15).
+    const typed = caps.helloTyped === true;
     return Object.assign(base, { kind: 'hello', skip: false, title: "Hey, I'm Nūs.", body: typed ? 'That was me. Wanna see what else I can do?' : 'I live on your screen. Wanna see what I can do?',
       spoken: typed ? HELLO_LINE : HELLO_UNTYPED_LINE, status: '', actions: HELLO_ACTIONS.slice() });
   }
   if (step === STEP.mic) return Object.assign(base, { kind: 'mic', title: 'Now, can I hear you?', body: 'Say anything out loud. If the bars move, your mic works.', spoken: 'Now, can I hear you? Say anything.', note: caps.english === false ? NOT_ENGLISH_LINE : '', device: caps.device || '', status: '', actions: continueActions(true) });
   if (step === STEP.key) {
     const typed = caps.whisper === false;
-    return Object.assign(base, { kind: 'key', title: 'This is how you talk to me', keys: keycaps(caps.ptt),
-      body: typed ? 'I cannot hear words on this computer yet, so type your name instead.' : 'Hold the keys, say your name, let go. I listen the whole time you hold them.',
-      spoken: typed ? 'Type your name and I will remember it.' : 'Hold the keys, say your name, and let go.',
+    return Object.assign(base, { kind: 'key', title: 'This is how you talk to me', keys: keycaps(caps.ptt, caps.mac),
+      body: typed ? 'I cannot hear words on this computer yet, so type your name instead.' : caps.mac ? 'Hold the keys, say your name, let go. The first time, your Mac asks to let Nus Companion use the microphone.' : 'Hold the keys, say your name, let go. I listen the whole time you hold them.',
+      spoken: typed ? 'Type your name and I will remember it.' : caps.mac ? 'Hold the keys, say your name, and let go.' : 'Hold the keys, say your name, and let go.',
       chip: typed ? '' : 'My name is ...', status: typed ? '' : 'Waiting for you',
       // Typing is always offered (Pranav, 2026-11-11: "even if someone's mic works, give them the
       // option to type their name just in case it doesn't pick it up correctly"). A typed name
@@ -191,7 +202,7 @@ function card(step, info = {}) {
   }
   if (step === STEP.questions) {
     const typed = caps.whisper === false;
-    return Object.assign(base, { kind: 'questions', title: 'Three quick questions', body: typed ? 'So what comes next is about you. Type to answer.' : 'So what comes next is about you. Hold the keys to answer.', spoken: 'Three quick questions.',
+    return Object.assign(base, { kind: 'questions', title: 'Three quick questions', body: typed ? 'So what comes next is about you. Type to answer.' : caps.mac ? 'So what comes next is about you. Hold the keys to answer, and let go to send.' : 'So what comes next is about you. Hold the keys to answer.', spoken: 'Three quick questions.',
       qa: qaRows(info.qa || QUESTIONS.map((q) => ({ q: q.q, a: '' })), 0), status: typed ? 'Type your answer.' : 'Hold the keys to answer.',
       input: { action: 'tour-answer', placeholder: typed ? 'Your answer' : 'Or type your answer', label: 'Send' },
       actions: [{ id: 'tour-skip-questions', label: 'Skip these' }].concat(continueActions(true)) });
@@ -207,7 +218,9 @@ function card(step, info = {}) {
       input: { action: 'tour-key', placeholder: 'Gemini or Anthropic key', label: 'Save', secret: true }, status: '', actions: [{ id: 'tour-next', label: 'Later' }] });
   }
   if (step === STEP.guide) {
-    if (caps.source) return Object.assign(base, { kind: 'guide', title: 'I see what you see', body: 'Hold the keys and ask me about the window behind this card.', spoken: 'Hold the keys and ask me about the window behind this card.', keys: keycaps(caps.ptt), chip: GUIDE_CHIP_ANY, status: '', actions: continueActions(true) });
+    if (caps.source && caps.macTyped) return Object.assign(base, { kind: 'guide', title: 'I see what you see', body: 'Click me and type a question about the window behind this card.', spoken: 'Click me and type a question about the window behind this card.', chip: GUIDE_CHIP_ANY, status: '', actions: continueActions(true) });
+    if (caps.source && caps.mac) return Object.assign(base, { kind: 'guide', title: 'I see what you see', body: 'Hold the keys, ask me about the window behind this card, and let go. Or click me and type.', spoken: 'Hold the keys and ask me about the window behind this card.', keys: keycaps(caps.ptt, caps.mac), chip: GUIDE_CHIP_ANY, status: '', actions: continueActions(true) });
+    if (caps.source) return Object.assign(base, { kind: 'guide', title: 'I see what you see', body: 'Hold the keys and ask me about the window behind this card.', spoken: 'Hold the keys and ask me about the window behind this card.', keys: keycaps(caps.ptt, caps.mac), chip: GUIDE_CHIP_ANY, status: '', actions: continueActions(true) });
     return Object.assign(base, { kind: 'guide', title: 'I see what you see', body: 'No AI is set up yet, so I will show you on the dashboard.', spoken: 'No AI is set up yet, so I will show you on the dashboard.', status: '', actions: [{ id: 'tour-show', label: 'Show me', primary: true }] });
   }
   if (step === STEP.hands) {
@@ -219,7 +232,9 @@ function card(step, info = {}) {
   // Inside the desktop app the Knot's tour hands over to the desktop's own tour.
   const tries = firstWins(caps).map((w, i) => ({ id: 'tour-try-' + w.struggle, label: w.label, primary: i === 0 }));
   const actions = (caps.desktopApp ? [{ id: 'tour-desktop', label: 'Tour the desktop app' }] : []).concat(tries, [{ id: 'tour-finish', label: 'Just explore' }]);
-  return Object.assign(base, { kind: 'done', title, body: 'Hold these keys any time, in any app, and ask. Or pick one and I will do it right now.', spoken: title + ' Hold these keys any time and ask. Or pick one, and I will do it now.', keys: keycaps(caps.ptt), status: '', actions });
+  if (caps.macTyped) return Object.assign(base, { kind: 'done', title, body: 'Click me any time, in any app, and type a question. Or pick one and I will do it right now.', spoken: title + ' Click me any time and ask. Or pick one, and I will do it now.', status: '', actions });
+  if (caps.mac) return Object.assign(base, { kind: 'done', title, body: 'Hold these keys any time, in any app, ask, and let go. Or click me and type. Or pick one and I will do it right now.', spoken: title + ' Hold these keys any time and ask. Or pick one, and I will do it now.', keys: keycaps(caps.ptt, caps.mac), status: '', actions });
+  return Object.assign(base, { kind: 'done', title, body: 'Hold these keys any time, in any app, and ask. Or pick one and I will do it right now.', spoken: title + ' Hold these keys any time and ask. Or pick one, and I will do it now.', keys: keycaps(caps.ptt, caps.mac), status: '', actions });
 }
 
 // The one line the tuck shows while a demo has the screen.
@@ -237,13 +252,16 @@ function spokenLines(caps) {
   return out;
 }
 // The fixed lines worth keeping as files once made (the name line is not fixed).
-function cachedLines() {
-  const caps = { whisper: true, source: true, cli: false, keyReady: false, hands: true, english: true, voice: { installed: true } };
+// mac: the Mac's own cards (press, not hold; no Hands). Run 43780708564 made 37 Windows tour lines on a
+// Mac that would never be said, about 25 s of every core.
+function cachedLines(mac = process.platform === 'darwin') {
+  const caps = Object.assign({ whisper: true, source: true, cli: false, keyReady: false, hands: true, english: true, voice: { installed: true } }, mac ? { mac: true, macTyped: false, hands: false } : {});
   const lines = new Set(spokenLines(caps).filter((l) => !/Maya/.test(l)));
   lines.add(HELLO_LINE); lines.add(HELLO_UNTYPED_LINE);
-  for (const extra of [{ source: false }, { cli: true }, { keyReady: true }, { publik: true }, { hands: false }, { whisper: false }]) for (let s = 1; s <= OF; s++) lines.add(card(s, { caps: Object.assign({}, caps, extra) }).spoken);
+  const extras = mac ? [{ source: false }, { cli: true }, { keyReady: true }, { publik: true }, { macTyped: true, whisper: false }] : [{ source: false }, { cli: true }, { keyReady: true }, { publik: true }, { hands: false }, { whisper: false }];
+  for (const extra of extras) for (let s = 1; s <= OF; s++) { const c = Object.assign({}, caps, extra); if (!skipStep(s, c)) lines.add(card(s, { caps: c }).spoken); }
   return [...lines].filter(Boolean);
 }
 
 module.exports = { HELLO_LINE, HELLO_UNTYPED_LINE, HELLO_ACTIONS, STEP, OF, QUESTIONS, HANDS_LINES, TRY_CHIPS, FIRST_WINS, firstWins, GUIDE_DEMO_LINE, guideChip, HANDS_CARD, HANDS_DONE_LINE, HANDS_UNSURE_LINE, NOT_ENGLISH_LINE, VOICE_MB, VOICE_LANDED_LINE, VOICE_FAILED_LINE, DASHBOARD_STOPS, DASHBOARD_DONE_LINE, DASHBOARD_TUCK, DASHBOARD_FAILED_LINE, HOME_CHANGED_LINE, KEY_OK_LINE, KEY_BAD_LINE, KEY_FAILED_LINE,
-  shouldShow, onFirstWindow, englishLocale, nameFrom, typedName, hearFor, UNSTICK_MS, stuck, unstuck, keyCheck, keycaps, continueActions, qaRows, homeChoices, sharingToggle, progressOf, card, tuckLine, spokenLines, cachedLines };
+  shouldShow, onFirstWindow, englishLocale, nameFrom, typedName, hearFor, UNSTICK_MS, stuck, unstuck, keyCheck, keycaps, skipStep, continueActions, qaRows, homeChoices, sharingToggle, progressOf, card, tuckLine, spokenLines, cachedLines };

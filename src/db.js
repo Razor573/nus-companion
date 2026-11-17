@@ -341,7 +341,7 @@ function classifySaveError(error) {
     return { kind: 'disk_full', message: 'Your disk is full, so Nūs cannot save. Free up space and it will retry on its own.' };
   }
   if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES' || code === 'EROFS') {
-    return { kind: 'locked', message: 'Another program on this PC is holding the Nūs database file, often antivirus. Retrying.' };
+    return { kind: 'locked', message: process.platform === 'darwin' ? 'Another program on this Mac is holding the Nūs database file. Retrying.' : 'Another program on this PC is holding the Nūs database file, often antivirus. Retrying.' };
   }
   return { kind: 'integrity', message: 'Nūs could not verify a saved copy of your data. Everything is still here and open, but it is not reaching the disk.' };
 }

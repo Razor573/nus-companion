@@ -12,7 +12,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { pcmToWav, rms16 } = require('../companion/src/wav');
-const { sharedWhisperServer, serverBeside, audioCtxFor } = require('./whisper-server');
+const { sharedWhisperServer, serverBeside, runnableCopy, audioCtxFor } = require('./whisper-server');
 
 const MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin';
 const MODEL_NAMES = ['ggml-small.en-q5_1.bin', 'ggml-base.en-q5_1.bin'];
@@ -35,12 +35,14 @@ function binaryDirs() {
 }
 
 function findBinary() {
-  if (cachedExe !== undefined) return cachedExe;
+  // Not cached before init on a Mac: the data-folder copy needs userData.
+  if (cachedExe !== undefined && (cachedExe === null || userDataDir || process.platform !== 'darwin')) return cachedExe;
   cachedExe = null;
   for (const dir of binaryDirs()) {
     for (const name of EXE_NAMES) {
       const full = path.join(dir, name);
-      try { if (fs.existsSync(full)) { cachedExe = full; return cachedExe; } } catch {}
+      // A Mac runs it from a copy in the data folder (runnableCopy, src/whisper-server.js).
+      try { if (fs.existsSync(full)) { cachedExe = runnableCopy(full, userDataDir, { log: (m) => console.log('[stt] ' + m) }); return cachedExe; } } catch {}
     }
   }
   return cachedExe;

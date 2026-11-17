@@ -32,6 +32,14 @@
 'use strict';
 
 const { buildPointRequest, parsePointReply, validatePoint, CONF_SURE } = require('./pointing');
+const { guessClick } = require('./click-guess');
+// When the screen cannot be read. A Mac names its own place for the permission (a tester's Mac, 2026-11-15:
+// the Windows line showed there); Windows keeps its line exactly.
+const CAPTURE_FAILED_LINE = process.platform === 'darwin'
+  ? 'I could not read the screen. Allow Nus Companion in System Settings, Privacy & Security, Screen & System Audio Recording, then quit me and open me again.'
+  : 'I could not read the screen. On Windows, allow screen capture for Nūs and try again.';
+// A capture can fail with something that is not an Error ("capture failed: undefined" on that Mac).
+function whyFailed(e) { if (e == null) return 'no reason given'; if (e instanceof Error) return e.message || e.name; try { return typeof e === 'string' ? e : JSON.stringify(e); } catch (_) { return String(e); } }
 const { normRectFromPhys, physRectFromNorm, physRectToWindow, reconcile, screenChanged, clickHits, iou, tokenOverlap } = require('./verify');
 const { templateInstruction } = require('./fastpoint');
 const { SETTLE_AFTER_CLICK_MS } = require('./settle');
@@ -382,7 +390,7 @@ class GuideSession {
         fastP = listP.then((r) => askJev(r, front));
       }
       const tc = now();
-      cap = await Promise.resolve().then(() => this.d.capture()).then((c) => { T.cap = now() - tc; return c; }, (e) => { this.d.log('capture failed: ' + e.message); return null; });
+      cap = await Promise.resolve().then(() => this.d.capture()).then((c) => { T.cap = now() - tc; return c; }, (e) => { this.d.log('capture failed: ' + whyFailed(e)); return null; });
       // The walk is awaited even when the screen turns out unchanged below: a
       // walk still queued in the probe would swallow the person's next click.
       listRes = listP ? await listP : null;
@@ -390,7 +398,7 @@ class GuideSession {
     if (gen !== this.gen) return;
     s.app = fg ? { title: fg.title || '', process: fg.process || '', hwnd: fg.hwnd } : null;
     s.frame = fg && fg.rect && fg.rect.w > 0 ? fg.rect : null;
-    if (!cap || !cap.dataUrl) { this.explain('I could not read the screen. On Windows, allow screen capture for Nūs and try again.'); return; }
+    if (!cap || !cap.dataUrl) { this.explain(CAPTURE_FAILED_LINE); return; }
     const originPhys = this.d.dipToScreen({ x: cap.display.bounds.x, y: cap.display.bounds.y });
 
     // Did the last click change anything? Same screen twice = say so. A change
@@ -517,11 +525,11 @@ class GuideSession {
     if (!cap) {
       if (fg === undefined) { const tf = now(); fg = await this.foreground(); T.fg = now() - tf; if (gen !== this.gen) return; }
       const tc = now();
-      cap = await Promise.resolve().then(() => this.d.capture()).then((c) => { T.cap = now() - tc; return c; }, (e) => { this.d.log('capture failed: ' + e.message); return null; });
+      cap = await Promise.resolve().then(() => this.d.capture()).then((c) => { T.cap = now() - tc; return c; }, (e) => { this.d.log('capture failed: ' + whyFailed(e)); return null; });
     }
     if (gen !== this.gen) return;
     if (fg) s.app = { title: fg.title || '', process: fg.process || '', hwnd: fg.hwnd };
-    if (!cap || !cap.dataUrl) { this.explain('I could not read the screen. On Windows, allow screen capture for Nūs and try again.'); return; }
+    if (!cap || !cap.dataUrl) { this.explain(CAPTURE_FAILED_LINE); return; }
     const llm = this.d.llm();
     if (!llm || !llm.ready) { this.explain('No AI is set up yet, so I cannot answer. Open Settings to sign in or add a key.', { fail: true, provider: '', err: 'No AI is set up' }); return; }
     T.provider = llm.provider || '';
@@ -863,9 +871,23 @@ class GuideSession {
 
   startWatch(extraKeys) {
     const probe = this.d.probe && this.d.probe.available ? this.d.probe : null;
-    if (!probe) return;
+    if (!probe) { this.watchWithoutProbe(); return; }
     const keys = [VK_ESCAPE].concat(Array.isArray(extraKeys) ? extraKeys : []);
     probe.watch({ keys, click: true, fg: false }).catch((e) => this.d.log('watch failed: ' + e.message));
+  }
+
+  // No click watcher (a Mac): the click is seen as the cursor on the target, then the screen changing
+  // (./click-guess.js). Only where the host says so (guessClicks), once per step.
+  watchWithoutProbe() {
+    const s = this.session;
+    if (!this.d.guessClicks || !s || !s.target || !s.target.rect || !this.d.cursor || !this.d.watcher || this.state !== 'pointing') return;
+    if (s.guessing === s.epoch) return;
+    s.guessing = s.epoch;
+    const gen = this.gen, epoch = s.epoch, rect = s.target.rect;
+    const stale = () => gen !== this.gen || this.session !== s || s.epoch !== epoch || this.state !== 'pointing';
+    guessClick({ rect, cursor: () => this.d.dipToScreen(this.d.cursor()), grab: () => this.d.watcher.grab(), isStale: stale })
+      .then((r) => { if (r.clicked && !stale()) { this.d.log('click on target (' + r.why + ')'); this.advance('click'); } })
+      .catch((e) => this.d.log('click guess failed: ' + e.message));
   }
 
   stopWatch() {

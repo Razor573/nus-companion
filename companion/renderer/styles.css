@@ -1000,6 +1000,8 @@ html:not(.standalone) [data-standalone-only]{display:none!important}
    while a demo has the screen. */
 #tour { position: fixed; z-index: 6; box-sizing: border-box; width: min(400px, 92vw); padding: 14px 16px 40px; border-radius: 14px; color: var(--tx-1); font-family: var(--font); font-size: 13.5px; line-height: 1.45; pointer-events: auto; border: 2px solid #fff; box-shadow: 0 0 0 2.8px rgb(13,15,25), 0 18px 42px rgba(0,0,0,.5); will-change: transform, opacity; }
 #tour.is-leaving, #tour-tuck.is-leaving { pointer-events: none !important; }
+/* The ask line with a tour card up and no room beside it: above the card (renderer.js clearOfTour). */
+#quick-ask.over-tour { z-index: 7; }
 /* One card into the next: the frame's height eases while a ghost of the old
    words fades out over the new (renderer.js, morphTour). */
 #tour.is-morphing { overflow: hidden; }

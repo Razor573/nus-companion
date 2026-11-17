@@ -13,3 +13,16 @@ Fable, the Knot's voice, ships in `resources/voice/kokoro-multi-lang-v1_0` (from
 - `espeak-ng-data` (pronunciation data from eSpeak NG): GNU General Public License v3.0 or later. The
   data files ship unmodified, exactly as published at https://github.com/espeak-ng/espeak-ng, where the
   source and the licence text are available.
+
+---
+
+Speech to text ships in `resources/whisper` and `resources/whisper-models` (Windows since 0.1.0; the
+Mac beta from 2026-11-15):
+
+- whisper.cpp and ggml (Georgi Gerganov and contributors), release b4938: MIT License. The Windows
+  build bundles the published Windows binaries; the Mac build bundles `whisper-cli` and
+  `whisper-server` compiled from the b4938 source on a macOS runner. The licence text ships beside
+  the Mac binaries as `LICENSE`, and is at https://github.com/ggml-org/whisper.cpp.
+- `ggml-base.en-q5_1.bin`: OpenAI's Whisper base.en model, converted and quantized for whisper.cpp.
+  The Whisper model weights are released by OpenAI under the MIT License
+  (https://github.com/openai/whisper).

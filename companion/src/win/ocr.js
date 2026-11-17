@@ -28,6 +28,8 @@ function ocrFile(file) {
 // probe: the long-lived Windows probe when it is up; its 'ocr' op skips the
 // half second a fresh PowerShell costs. A probe failure falls back to one.
 async function ocrJpeg(jpeg, dir, probe) {
+  // Not on Windows (the Mac beta): no file is written and nothing is started; the caller lets the model read instead.
+  if (process.platform !== 'win32') throw new Error('ocr is Windows only');
   await fs.promises.mkdir(dir, { recursive: true });
   const file = path.join(dir, 'ocr-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7) + '.jpg');
   await fs.promises.writeFile(file, jpeg);

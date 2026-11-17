@@ -14,7 +14,7 @@ test('interrupting a long spoken answer clears the echo gate and takes desktop m
   const ctx = { win: { isDestroyed: () => false, isVisible: () => true }, OPEN_MIC: true, ptt: { held: false }, state: {}, guide: null,
     speakMuteUntil: Date.now() + 60000, hooks: { onVoiceTakeover: () => takeovers++ },
     getReflex: () => ({ enabled: () => true, warm() {} }), getListener: () => ({ available: true, reset() { resets++; } }), warmGuideBrain() {},
-    send: (c,p) => sent.push([c,p]), probeReady: () => false, setTimeout: () => 1, OPEN_MIC_MAX_MS: 180000, Date, speechTurn: 4 };
+    send: (c,p) => sent.push([c,p]), probeReady: () => false, setTimeout: () => 1, OPEN_MIC_MAX_MS: 180000, Date, speechTurn: 4, startMacReleaseWatch() {} };
   vm.runInNewContext(body + ';pttStart();', ctx);
   assert.equal(ctx.speakMuteUntil, 0); assert.equal(ctx.ptt.held, true);
   assert.equal(takeovers, 1); assert.equal(resets, 1);
@@ -26,7 +26,7 @@ test('main mute blocks speech from every channel without hiding the visible answ
   const body = main.slice(main.indexOf('let speakMuteUntil ='), main.indexOf('// What the Companion knows'));
   const sent = []; let stops = 0;
   const ctx = { hooks: { onVoiceTakeover: () => stops++ }, ptt: { held: false }, listener: null,
-    win: { isDestroyed: () => false, webContents: { send: (c,p) => sent.push([c,p]) } }, Date };
+    win: { isDestroyed: () => false, webContents: { send: (c,p) => sent.push([c,p]) } }, Date, IS_MAC: false };
   vm.runInNewContext(body + ';send("assignment:voice",{enabled:false});send("guide:bubble",{text:"visible",speak:"late reply"});', ctx);
   assert.equal(stops, 1); assert.equal(sent.at(-1)[1].speak, undefined); assert.equal(sent.at(-1)[1].text, 'visible');
   vm.runInNewContext('send("assignment:voice",{enabled:true});send("guide:bubble",{speak:"requested"});', ctx);

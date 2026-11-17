@@ -21,7 +21,11 @@
     catch (e) { const text = String(e.message || e).replace(/^Error invoking remote method '[^']+': Error: /,''); if (!rowError(button, text)) notice(text, true); }
     finally { if (button && button.tagName === 'BUTTON') button.disabled = false; }
   }
-  const chord = s => String(s || 'Unavailable').replace(/CommandOrControl|Control/g,'Ctrl').replace(/Return/g,'Enter');
+  // On a Mac the keys say Command, Control and Option (renderer/mac-words.js loads first).
+  const MAC_KEYS = !!(window.NusMacWords && window.NusMacWords.mac);
+  const chord = s => MAC_KEYS
+    ? String(s || 'Unavailable').replace(/CommandOrControl/g,'Command').replace(/\bCtrl\b/g,'Control').replace(/\bAlt\b/g,'Option')
+    : String(s || 'Unavailable').replace(/CommandOrControl|Control/g,'Ctrl').replace(/Return/g,'Enter');
   function paintStatus(s) {
     currentStatus = s;
     if (s.version) $('#app-version').textContent = s.version;
@@ -464,7 +468,9 @@
     knot:()=>{if(window.NusKnotEngine)window.NusKnotEngine.mount({body:$('#d-knot'),thread:null,light:{treatment:'none'},pauseWhenHidden:true});},
     openSaved:()=>run(()=>setView('saved')),
     openSession:id=>run(async()=>{await setView('saved');await setSaved('history');await detail(id);}),
-    openSettings:section=>run(async()=>{await setView('settings');if(section==='voice'){const box=$('#own-voice');if(box)box.closest('.card').scrollIntoView({block:'start'});}}),
+    // The voice switch on the home row sends a not-yet-installed Fable here. The scroll waits two frames for
+    // Settings to lay out: scrolled at once it did nothing and left the person on Keys, the top card (a tester, 2026-11-15).
+    openSettings:section=>run(async()=>{await setView('settings');if(section==='voice'){await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));const box=$('#own-voice');if(box){box.closest('.card').scrollIntoView({block:'start'});box.focus({preventScroll:true});notice('Fable needs one download first. Turn on the Knot voice switch here.');}}}),
     onError:e=>notice(e.message||String(e),true)});
   // A switch flipped anywhere: the home row and the Settings page both follow.
   function mirrorSettings(s){homeView.onSettings(s);if(view!=='settings')return;for(const [id,on] of [['open-mic',!!s.openMic],['sounds',s.sounds!==false],['channel-messages',s.channelMessages!==false],['start-with-windows',s.startWithWindows===true],['hands',s.hands===true],['tasks',s.tasks===true],['knot-island',s.knotIsland===true],['hide-from-capture',s.hideFromCapture!==false],['speak-replies-home',!!s.speakReplies]]){const box=$('#'+id);if(box&&box!==document.activeElement)box.checked=on;}}

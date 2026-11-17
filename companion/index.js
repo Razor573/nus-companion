@@ -5,7 +5,8 @@
 const { BrowserWindow, ipcMain, globalShortcut, screen, session, desktopCapturer, shell, Tray, Menu, app, nativeImage, clipboard } = require('electron');
 const IS_MAC = process.platform === 'darwin';
 // The shortcuts are CommandOrControl; the labels should say what the key is.
-const HOTKEY_MOD = IS_MAC ? '⌘' : 'Ctrl';
+// On a Mac the hide and panic shortcuts are Control (registerShortcuts), so the labels say Control.
+const HOTKEY_MOD = IS_MAC ? 'Control' : 'Ctrl';
 const path = require('path');
 const fs = require('fs');
 const store = require('./src/store');
@@ -67,10 +68,17 @@ const { createLedger, activityView } = require('./src/usage-ledger');
 const { createThisWeek } = require('./src/this-week');
 const { createVoice } = require('./src/voice');
 const { createTouchPad } = require('./src/touch-pad');
+// Points to physical pixels and back, on a Mac too (Electron has the calls on Windows only).
+const { createScreenPoints } = require('./src/screen-points');
+let screenPointsCache = null;
+function screenPoints() { if (!screenPointsCache) screenPointsCache = createScreenPoints(screen); return screenPointsCache; }
 const { createOverlayMouse, mouseNoteLine } = require('./src/overlay-mouse');
 const { overlayArea } = require('./src/overlay-area');
 const { ACKS, NEUTRAL_ACK, LINES, ackForIntent, heardBack, smallTalk, createLineCache } = require('./src/voice/lines');
 const { MOD_VKS, modifierChord, createChordTracker } = require('./src/voice/ptt-chord');
+const { macChordMods, watchChordRelease } = require('./src/voice/mac-release');
+// The Mac's words for what this process sends and what the model reads (renderer/mac-words.js).
+const MacWords = require('./renderer/mac-words.js');
 const assignmentCapturer = createCaptureClient({ nativeImage, log: m => console.log('[assignment] ' + m) });
 const captureAssignmentDisplay = (displayId, opts) => assignmentCapturer.capture(displayId, opts);
 app.on('before-quit', () => assignmentCapturer.close());
@@ -126,6 +134,8 @@ const RESERVED_SHORTCUTS = new Set([
   'commandorcontrol+h',
   'commandorcontrol+shift+x',
   'commandorcontrol+shift+space',
+  // The same three on a Mac, where they are Control (registerShortcuts).
+  'control+shift+x', 'control+shift+space', 'control+shift+t',
   'commandorcontrol+shift+t',
   'commandorcontrol+alt+space'
 ]);
@@ -176,6 +186,9 @@ let speechTurn = 0, speechStoppedAt = 0;
 const speechOwner = new Map();   // stream -> the turn its first line was said in
 function hushSpeech(why) { speechTurn++; speechStoppedAt = Date.now(); send('voice:hush', { why: String(why || '') }); }
 function send(channel, data) {
+  // On a Mac the bubbles, hints, tour cards and spoken lines say the Mac's keys and places. A
+  // model's streamed answer is left as it came (it was already told it is on a Mac).
+  if (IS_MAC && data && typeof data === 'object' && channel !== 'llm:token' && channel !== 'llm:done') data = MacWords.uiText(data);
   // The tour's guide card waits for a real guide step to reach the screen.
   if (channel === 'guide:target' && tour && tour.step === Tour.STEP.guide && !tour.shown && data && data.task === 'guide') tourTargetShown();
   if (channel === 'guide:say' && data && data.stream) {
@@ -217,7 +230,8 @@ const NO_KEY_COPY = 'No AI is set up yet. Add a free Gemini key or an Anthropic 
 function keysGuide() {
   let viaPublik = false, publikBuild = false;
   try { const p = require('./src/publik'); publikBuild = p.on(); viaPublik = p.active(); } catch (_) { /* a build without publik */ }
-  const voice = 'Voice commands such as opening an app, typing and searching need no key. A TypeSafe key in Settings, Keys is optional.';
+  // On a Mac the app-opening and typing commands run through Windows-only helpers, so the Mac line claims talking only.
+  const voice = IS_MAC ? 'Talking to the Knot needs no key: the words are turned into text on this Mac. There is no Hands on a Mac yet. A TypeSafe key in Settings, Keys is optional.' : 'Voice commands such as opening an app, typing and searching need no key. A TypeSafe key in Settings, Keys is optional.';
   if (viaPublik) return 'No key is needed: answers and pointing come through the publik account this person signed in with. In Settings, Keys they can switch to their own Gemini, Anthropic or Nvidia key, or Claude Code, if they prefer. ' + voice;
   const own = 'Answers and pointing use one of these, set in Settings, Keys: a free Gemini key, an Anthropic or Nvidia key, or Claude Code if it is installed and signed in.';
   return own + (publikBuild ? ' Or switch back to publik there, which needs no key.' : '') + ' ' + voice;
@@ -225,13 +239,17 @@ function keysGuide() {
 
 function appGuide() {
   if (!STANDALONE) return APP_GUIDE;
-  const chord = ptt.accelerator || DEFAULT_PTT_SHORTCUT;
-  return 'APP GUIDE: Nūs Companion is a standalone voice command assistant. ' +
-    'Hold ' + chord + ' to talk, or press it to toggle when open mic is on. Ctrl+Shift+T selects what is under the cursor to ask about. ' +
+  const raw = ptt.accelerator || DEFAULT_PTT_SHORTCUT;
+  const chord = IS_MAC ? raw.replace(/\bCommandOrControl\b/, 'Command').replace(/\bAlt\b/, 'Option') : raw;
+  const guide = 'APP GUIDE: Nūs Companion is a standalone voice command assistant. ' +
+    (IS_MAC ? 'This is the Mac version: hold ' + chord + ', talk, and let go to send (a quick tap starts listening until the next press), or click the Knot and type. There is no Hands on a Mac yet. Ctrl+Shift+T selects what is under the cursor to ask about. '
+      : 'Hold ' + chord + ' to talk, or press it to toggle when open mic is on. Ctrl+Shift+T selects what is under the cursor to ask about. ') +
     'Ctrl+Shift+Space shows or hides the Knot, and Ctrl+Shift+X hides it at once. ' +
     'The dashboard has Saved, Map, Folders, and Settings. Saved holds kept walkthroughs, routines, and notes. ' +
     keysGuide() + ' ' +
     'The tray opens the dashboard and has Quit. Closing the dashboard leaves the Knot and hotkeys running. There is no plan source yet.';
+  // On a Mac: Control+Shift for the three hotkeys, the menu bar icon for the tray.
+  return IS_MAC ? MacWords.macText(guide) : guide;
 }
 
 // -------- window --------
@@ -239,9 +257,16 @@ function appGuide() {
 // so the strand can reach any pixel on it. It is click-through everywhere
 // except the Knot corner and the bubbles, and it never moves: the Knot picks
 // a corner instead.
+// Lag experiments (scripts/lag/mac-walk.cjs), environment only, never set by an install:
+//   NUS_EXP_OVERLAY_BOX=1      the overlay is a 520 px box in the bottom-right corner, not the whole screen
+//   NUS_EXP_CURSOR_MS=<ms>     the cursor poll's period (0: off)
+//   NUS_EXP_LEVEL=floating     the overlay's macOS window level instead of screen-saver
+const EXP = { box: process.env.NUS_EXP_OVERLAY_BOX === '1', cursorMs: process.env.NUS_EXP_CURSOR_MS != null && process.env.NUS_EXP_CURSOR_MS !== '' ? Number(process.env.NUS_EXP_CURSOR_MS) : null, level: process.env.NUS_EXP_LEVEL || '' };
+if (EXP.box || EXP.cursorMs != null || EXP.level) console.log('[lag] experiment ' + JSON.stringify(EXP));
 function overlayBounds() {
   const want = store.getSettings().knotDisplayId;
   const display = (want != null && screen.getAllDisplays().find((d) => d.id === want)) || screen.getPrimaryDisplay();
+  if (EXP.box) { const area = process.platform === 'win32' ? overlayArea(display) : display.workArea; const s = Math.min(520, area.width, area.height); return { x: area.x + area.width - s, y: area.y + area.height - s, width: s, height: s }; }
   return process.platform === 'win32' ? overlayArea(display) : display.workArea;
 }
 // Where the Knot sits on the current display: a dragged position (fractions
@@ -308,8 +333,8 @@ async function sampleBackdrop() {
     const b = win.getBounds(), f = knotFraction();
     const at = knotAt || { x: f.fx * b.width, y: f.fy * b.height };
     const half = L.box / 2;
-    const a = screen.dipToScreenPoint({ x: Math.round(b.x + at.x - half), y: Math.round(b.y + at.y - half) });
-    const c = screen.dipToScreenPoint({ x: Math.round(b.x + at.x + half), y: Math.round(b.y + at.y + half) });
+    const a = screenPoints().dipToScreen({ x: Math.round(b.x + at.x - half), y: Math.round(b.y + at.y - half) });
+    const c = screenPoints().dipToScreen({ x: Math.round(b.x + at.x + half), y: Math.round(b.y + at.y + half) });
     const r = await probe.request('screen.luma', { x: a.x, y: a.y, w: Math.max(8, c.x - a.x), h: Math.max(8, c.y - a.y), ring: captureHidden() ? 0 : 1 }, 1200);
     if (r && Number.isFinite(r.luma) && (lastLuma == null || Math.abs(r.luma - lastLuma) >= 0.02)) { lastLuma = r.luma; send('knot:backdrop', { luma: r.luma }); }
   } catch (_) { /* the probe is busy or restarting; the next tick tries again */ }
@@ -381,7 +406,7 @@ function createOverlayWindow() {
 
   applyCapturePolicy();
   if (process.platform === 'darwin') {
-    win.setAlwaysOnTop(true, 'screen-saver', 1);
+    win.setAlwaysOnTop(true, EXP.level || 'screen-saver', 1);
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     if (typeof win.setHiddenInMissionControl === 'function') win.setHiddenInMissionControl(true);
   } else {
@@ -798,6 +823,9 @@ function rtTryAfterWin() {
   return shown;
 }
 function rtTryAutostart() {
+  // Start-at-login is Windows only (src/main-companion.js applyAutostart): a Mac is never offered
+  // a button that would do nothing.
+  if (IS_MAC) { rtAutostartPending = false; return false; }
   if (!rtAutostartPending || !hooks.autostart || !rtFree()) return false;
   const R = getRetention();
   if (!R.autostartDue(hooks.autostart.enabled())) { rtAutostartPending = false; return false; }
@@ -1190,7 +1218,7 @@ async function runFeature(mode, userText) {
     if (def.needsScreen) {
       try { imageDataUrl = await captureScreenshot(); }
       catch (e) {
-        send('status', { message: STANDALONE ? 'Screen capture is unavailable. Check Windows capture permissions and try again.' : 'Screen capture needs permission. Grant Screen Recording to Nūs in System Settings.' });
+        send('status', { message: STANDALONE && !IS_MAC ? 'Screen capture is unavailable. Check Windows capture permissions and try again.' :'Screen capture needs permission. Grant Screen Recording to Nūs in System Settings.' });
       }
     }
 
@@ -1564,12 +1592,18 @@ function registerShortcuts() {
   // A chord another app already owns registers as false; say so in the log
   // instead of silently leaving that feature dead.
   const chord = (accel, fn) => { let ok = false; try { ok = globalShortcut.register(accel, fn); } catch (_) { ok = false; } if (!ok) console.log('[companion] shortcut unavailable: ' + accel); return ok; };
+  // On a Mac these three are Control, not Command: Command+Shift+T reopens a closed tab in every
+  // browser, and a global shortcut would take it from them. The Ctrl+Shift labels then say the truth.
+  if (IS_MAC) { chord('Control+Shift+X', panicHide); chord('Control+Shift+Space', toggleOverlay); }
+  else {
   chord('CommandOrControl+Shift+X', panicHide);
   chord('CommandOrControl+Shift+Space', toggleOverlay);
+  }
   if (FOUNDER && !STANDALONE) chord('CommandOrControl+H', () => runFeature('leetcode', ''));
   // Ctrl+Shift+T: point at what is under the cursor and ask about it. The
   // founder build keeps the fake-step harness on the same chord.
-  if (STANDALONE) chord('CommandOrControl+Shift+T', selectAtCursor);
+  if (IS_MAC) chord('Control+Shift+T', STANDALONE || !FOUNDER ? selectAtCursor : harnessStep);
+  else if (STANDALONE) chord('CommandOrControl+Shift+T', selectAtCursor);
   else chord('CommandOrControl+Shift+T', FOUNDER ? harnessStep : selectAtCursor);
   registerPttShortcut();
 
@@ -1642,8 +1676,8 @@ function applySettingsPatch(patch) {
 function setPttShortcut(accelerator) {
   const next = normalizeShortcut(accelerator);
   const mods = Boolean(modifierChord(next));
-  if (!mods && (!/^(?:(?:CommandOrControl|Control|Alt|Shift)\+)+(?:Space|[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4]))$/i.test(next) || next.length > 80)) return { ok: false, error: 'Use two modifiers on their own (Ctrl+Alt), or modifiers with a letter, number, Space, or function key.' };
-  if (mods && !probeReady()) return { ok: false, error: 'Holding modifiers on their own needs the Windows probe, which is not running. Pick a key with a letter or Space.' };
+  if (!mods && (!/^(?:(?:CommandOrControl|Control|Alt|Shift)\+)+(?:Space|[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4]))$/i.test(next) || next.length > 80)) return { ok: false, error: IS_MAC ? 'Use modifiers with a letter, number, Space, or function key, like Control+Option+Space.' : 'Use two modifiers on their own (Ctrl+Alt), or modifiers with a letter, number, Space, or function key.' };
+  if (mods && !probeReady()) return { ok: false, error: IS_MAC ? 'On a Mac the talk key needs a letter or Space with the modifiers, like Control+Option+Space.' : 'Holding modifiers on their own needs the Windows probe, which is not running. Pick a key with a letter or Space.' };
   if (RESERVED_SHORTCUTS.has(next.toLowerCase()) && next.toLowerCase() !== LEGACY_PTT_SHORTCUT.toLowerCase() || next.toLowerCase() === String(registeredAssistShortcut).toLowerCase()) return { ok: false, error: 'That shortcut is reserved.' };
   if (ptt.held) pttStop('rebind');
   const previous = ptt.chord ? null : ptt.accelerator;
@@ -1953,7 +1987,10 @@ let reflex = null;
 let reflexStarted = false;
 // The one process that presses keys. Separate from the probe, which only reads.
 let hands = null;
+// Not on Windows: an inert stand-in, so no caller can start a helper that cannot run there.
+const NO_HANDS = { available: false, start() {}, stop() {}, on() {}, status: () => ({ available: false, lastError: 'Windows only' }), request: () => Promise.reject(new Error('Hands is Windows only')) };
 function getHands() {
+  if (process.platform !== 'win32') return NO_HANDS;
   if (!hands) {
     hands = createProbe({ script: (STANDALONE ? [process.resourcesPath && path.join(process.resourcesPath, 'win', 'hands.ps1'), path.join(__dirname, 'src', 'reflex', 'hands.ps1')].filter(Boolean).find(p => fs.existsSync(p)) : path.join(__dirname, 'src', 'reflex', 'hands.ps1')), log: (m) => console.log('[hands]', m) });
     hands.start();
@@ -2159,8 +2196,8 @@ function handleFocusCommand(cmd, source) {
 
 // Physical screen rect (from the probe) -> overlay window CSS-ish DIPs.
 function physRectToWindow(r) {
-  const a = screen.screenToDipPoint({ x: r.x, y: r.y });
-  const b = screen.screenToDipPoint({ x: r.x + r.w, y: r.y + r.h });
+  const a = screenPoints().screenToDip({ x: r.x, y: r.y });
+  const b = screenPoints().screenToDip({ x: r.x + r.w, y: r.y + r.h });
   const wb = win.getBounds();
   return { x: a.x - wb.x, y: a.y - wb.y, w: Math.max(1, b.x - a.x), h: Math.max(1, b.y - a.y) };
 }
@@ -2171,7 +2208,7 @@ async function controlUnderCursor() {
   if (!probeReady() || !win || win.isDestroyed()) return null;
   try {
     const dip = screen.getCursorScreenPoint();
-    const phys = screen.dipToScreenPoint(dip);
+    const phys = screenPoints().dipToScreen(dip);
     const r = await probe.request('uia.frompoint', { x: phys.x, y: phys.y, ignorePid: process.pid }, 2500);
     const el = r && r.element;
     if (!el || !el.rect || el.pid === process.pid) return null;
@@ -2201,7 +2238,7 @@ function hashCapture(cap, physRect) {
   const whole = cap._whole;
   let crop = null;
   if (physRect) {
-    const origin = screen.dipToScreenPoint({ x: cap.display.bounds.x, y: cap.display.bounds.y });
+    const origin = screenPoints().dipToScreen({ x: cap.display.bounds.x, y: cap.display.bounds.y });
     const f = cap.width / cap.pxWidth;
     const pad = 24;
     const r = {
@@ -2458,7 +2495,8 @@ function prerenderLines(why) {
 // Off until the switch on the dashboard, Settings, turns it on.
 let agent = null, handsApps = null;
 const KEEP_GOING = /^(?:ok(?:ay)?[,.! ]+)?(?:keep going|go on|continue|carry on|finish (?:it|that|up))[.!]?$/i;
-function handsOn() { return store.getSettings().hands === true; }
+// Hands presses keys through a PowerShell helper: Windows only. Off on a Mac whatever the setting says.
+function handsOn() { return process.platform === 'win32' && store.getSettings().hands === true; }
 // An ask Hands takes whole, before the reflex layer sees a clause of it:
 // several steps, or a task that names the app or site it happens in.
 function handsClaims(text) { return handsTakes(text, { hands: handsOn(), apps: handsAppNames() }); }
@@ -2482,7 +2520,7 @@ async function handsRead() {
   const listP = probeReady() && fg && fg.hwnd ? probe.request('uia.list', { hwnd: fg.hwnd, max: 150, budgetMs: 1200 }, 3000).catch(() => null) : Promise.resolve(null);
   const cap = await guideCapture();
   list = await listP;
-  const originPhys = cap ? screen.dipToScreenPoint({ x: cap.display.bounds.x, y: cap.display.bounds.y }) : { x: 0, y: 0 };
+  const originPhys = cap ? screenPoints().dipToScreen({ x: cap.display.bounds.x, y: cap.display.bounds.y }) : { x: 0, y: 0 };
   const elements = ((list && list.elements) || []).filter((e) => e.rect).map((e) => ({ id: e.id, name: e.name, type: e.type, automationId: e.automationId, isPassword: e.isPassword, rect: e.rect, box: cap ? (() => { const n = normRect(e.rect, cap, originPhys); return [n.x, n.y, n.w, n.h]; })() : null }));
   return { fg, cap, elements, originPhys };
 }
@@ -3186,6 +3224,7 @@ const routeAssignmentCommand = createAssignmentRouter();
 let assignmentRouteSeq = 0;
 function closeAssignmentMic(source) {
   if (source !== 'voice' || !OPEN_MIC || !ptt.held) return;
+  stopMacReleaseWatch();
   ptt.held = false;
   clearTimeout(ptt.timer);
   ptt.timer = null;
@@ -3277,8 +3316,8 @@ function overlayMasks() {
   if (captureHidden() || !win || win.isDestroyed()) return [];
   const masks = [];
   const rect = (x0, y0, x1, y1) => {
-    const p = screen.dipToScreenPoint({ x: Math.round(x0), y: Math.round(y0) });
-    const q = screen.dipToScreenPoint({ x: Math.round(x1), y: Math.round(y1) });
+    const p = screenPoints().dipToScreen({ x: Math.round(x0), y: Math.round(y0) });
+    const q = screenPoints().dipToScreen({ x: Math.round(x1), y: Math.round(y1) });
     return { x: p.x, y: p.y, w: q.x - p.x, h: q.y - p.y };
   };
   try {
@@ -3296,8 +3335,14 @@ async function guideCapture() {
   try {
     const cap = await assignmentCapturer.captureModel(displayId, { maxSide: GUIDE_CAPTURE_MAXSIDE, quality: GUIDE_CAPTURE_QUALITY, masks: overlayMasks() });
     if (cap) return cap;
-  } catch (e) { console.log('[guide] worker capture failed, grabbing in-process:', e.message); }
-  return captureDisplay(displayId, { maxSide: GUIDE_CAPTURE_MAXSIDE });
+  } catch (e) { console.log('[guide] worker capture failed, grabbing in-process:', e && e.message ? e.message : String(e)); }
+  let cap = null, err = null;
+  try { cap = await captureDisplay(displayId, { maxSide: GUIDE_CAPTURE_MAXSIDE }); } catch (e) { err = e; }
+  // On a Mac, say why: macOS's own Screen Recording answer for this app, so a report can tell
+  // "not allowed" from anything else (a tester's Mac, 2026-11-15, logged only "capture failed: undefined").
+  if (!cap && IS_MAC) { let st = 'unknown'; try { st = require('electron').systemPreferences.getMediaAccessStatus('screen'); } catch (_) { /* older Electron */ } routeLog('screen: capture came back ' + (err ? 'with an error (' + (err.message || String(err)) + ')' : 'empty') + '; macOS Screen Recording for this app: ' + st); }
+  if (err) throw err;
+  return cap;
 }
 function guideDebugLog(file, rec) {
   if (process.env.NUS_GUIDE_DEBUG !== '1') return;
@@ -3345,8 +3390,11 @@ function getGuide() {
     get probe() { return probe; },
     llm: () => guideLlm(),
     send,
-    screenToDip: (pt) => screen.screenToDipPoint(pt),
-    dipToScreen: (pt) => screen.dipToScreenPoint(pt),
+    screenToDip: (pt) => screenPoints().screenToDip(pt),
+    dipToScreen: (pt) => screenPoints().dipToScreen(pt),
+    // A Mac has no click watcher: the guide sees a click as the cursor on the target, then the screen changing.
+    guessClicks: IS_MAC,
+    cursor: () => screen.getCursorScreenPoint(),
     winBounds: () => (win && !win.isDestroyed() ? win.getBounds() : { x: 0, y: 0, width: 0, height: 0 }),
     hashCapture,
     selfPid: process.pid,
@@ -3476,7 +3524,13 @@ function stopProactive() {
 // Windows, so no other app can own it. The old hotkey stays as a choice and
 // as the fallback when the probe is not running.
 const SMOKE_RUN = process.argv.includes('--smoke');
+// macOS (the Mac beta): holding two modifiers on their own needs a key watcher, which on
+// Windows is the probe and on a Mac would be a native module plus the Input Monitoring
+// permission. So the Mac talk key is a normal hotkey, Control+Option+Space: hold it, talk,
+// and let go to send; the release is read from the modifier state (src/voice/mac-release.js,
+// no permission). A quick tap toggles instead: the next press sends (the no-probe path in pttStart).
 const DEFAULT_PTT_SHORTCUT = 'Control+Alt';
+const MAC_PTT_SHORTCUT = 'Control+Alt+Space';
 const LEGACY_PTT_SHORTCUT = 'CommandOrControl+Alt+Space';
 // A hold shorter than this with nothing heard is an app shortcut on the same
 // modifiers (Ctrl+Alt+T), not an ask: it ends without a word.
@@ -3581,6 +3635,81 @@ function restoreKnotState() {
   send('guide:state', { state: guide && guide.active() ? guide.status().state : null, task: 'guide' });
 }
 
+// The Mac beta bundles whisper.cpp built on the macOS runner (Resources/whisper, run from a copy
+// in the data folder: src/whisper-server.js runnableCopy) and the base English model, so speech is
+// turned into words on the Mac with nothing to paste, as on Windows. If the engine is missing, the
+// talk key says so in one plain line, the microphone is never opened, and typing still works.
+const MAC_NO_SPEECH = 'Talking is not set up on this Mac. Click me and type your question.';
+const MAC_MIC_OFF = 'I cannot hear you: the microphone is off for Nus Companion. Turn it on in System Settings, Privacy & Security, Microphone, then press the keys again. You can still click me and type.';
+const MAC_MIC_ON = 'Thanks. Now hold Control, Option and Space, say your question, and let go to send.';
+const MAC_STT_FAILED = 'I could not turn that into words on this Mac. Click me and type your question.';
+const PTT_MISSED = IS_MAC ? 'I did not catch that. Hold the keys, speak, then let go.' : 'I did not catch that. Hold the key and speak.';
+function macSpeechReady() {
+  try { return createSTT(store.getSettings()).available || getListener().available; } catch (_) { return false; }
+}
+// The microphone on a Mac: macOS asks the person the first time, here, on the first press of the
+// talk key (never at launch). The words it shows are NSMicrophoneUsageDescription in the build config.
+async function macMicAllowed() {
+  const { systemPreferences } = require('electron');
+  let st = 'unknown';
+  try { st = systemPreferences.getMediaAccessStatus('microphone'); } catch (_) { st = 'unknown'; }
+  if (st === 'granted') return true;
+  if (st === 'not-determined') {
+    routeLog('ptt: asking macOS for the microphone');
+    let ok = false;
+    try { ok = await systemPreferences.askForMediaAccess('microphone'); } catch (e) { routeLog('ptt: microphone ask failed: ' + e.message); }
+    routeLog('ptt: microphone ' + (ok ? 'allowed' : 'not allowed'));
+    // Just allowed: the press that raised the question does not also start listening; the person
+    // was reading a dialog, not talking. The next press does.
+    if (ok) { flash(MAC_MIC_ON, 7000); return false; }
+  } else routeLog('ptt: microphone is ' + st + ' for this app');
+  flash(MAC_MIC_OFF, 10000);
+  return false;
+}
+// The talk key on a Mac goes through here first (registerPttShortcut). Hold it, speak, let go to
+// send; a quick tap instead (let go within MAC_TAP_MS) keeps listening until the next press.
+// The release comes from src/voice/mac-release.js (the modifier state, no permission needed).
+const MAC_TAP_MS = 450;
+function stopMacReleaseWatch() {
+  if (ptt.macWatch) { ptt.macWatch.stop(); ptt.macWatch = null; }
+}
+function startMacReleaseWatch() {
+  stopMacReleaseWatch();
+  if (!IS_MAC || OPEN_MIC || probeReady()) return;
+  const mods = macChordMods(ptt.accelerator);
+  if (!mods.length) return;
+  const press = ptt.press;
+  let sawHeld = false;
+  const watch = watchChordRelease({
+    mods,
+    onChange: (held) => {
+      if (!ptt.held || ptt.press !== press || ptt.macWatch !== watch) return;
+      if (held) { sawHeld = true; return; }
+      if (!sawHeld || Date.now() - ptt.startedAt < MAC_TAP_MS) {
+        // Tapped, not held: the press-again toggle takes over.
+        stopMacReleaseWatch();
+        routeLog('ptt: tapped, listening until the next press');
+        return;
+      }
+      pttStop('release');
+    },
+    onError: (m) => { routeLog('ptt: release watch unavailable (' + m + '), press again to send'); if (ptt.macWatch === watch) ptt.macWatch = null; },
+  });
+  ptt.macWatch = watch;
+}
+let macMicAsking = false;
+async function pttPressMac() {
+  if (ptt.held) { pttStart(); return; }
+  if (!macSpeechReady()) {
+    if (Date.now() - (ptt.macNoteAt || 0) > 1500) { ptt.macNoteAt = Date.now(); routeLog('ptt: no speech engine on this Mac, typed only'); flash(MAC_NO_SPEECH, 6000); }
+    return;
+  }
+  if (macMicAsking) return;
+  macMicAsking = true;
+  let ok = false;
+  try { ok = await macMicAllowed(); } finally { macMicAsking = false; }
+  if (ok) pttStart();
+}
 function pttStart() {
   if (!win || win.isDestroyed() || !win.isVisible()) return;
   // Open mic: a held chord auto-repeats about 30 times a second, and each
@@ -3628,6 +3757,7 @@ function pttStart() {
     else probe.watch({ keys: [ptt.vk], click: false, fg: false }).catch(() => {});
   }
   ptt.timer = setTimeout(() => pttStop('timeout'), OPEN_MIC ? OPEN_MIC_MAX_MS : PTT_MAX_MS);
+  startMacReleaseWatch();
 }
 
 // Which words hold a sentence open across a pause lives in src/reflex/rules.js
@@ -3648,6 +3778,7 @@ function whisperVocabulary() {
 }
 
 async function pttStop(reason) {
+  stopMacReleaseWatch();
   if (!ptt.held) return;
   const keyUpAt = Date.now();
   ptt.held = false;
@@ -3682,11 +3813,11 @@ async function pttStop(reason) {
     sayNeutral(heardText(ptt.lastPartial), keyUpAt);
     try { await getListener().flush(); } catch (e) { console.log('[listen] ' + e.message); }
     routeHeldOnRelease();
-    if (!ptt.finals) { flash('I did not catch that. Hold the key and speak.', 3000); restoreKnotState(); }
+    if (!ptt.finals) { flash(PTT_MISSED, 3000); restoreKnotState(); }
     else if (!(guide && guide.active())) restoreKnotState();
     return;
   }
-  if (pcm.length < PTT_MIN_BYTES || rms16(pcm) < RMS_GATE) { flash('I did not catch that. Hold the key and speak.', 3000); restoreKnotState(); return; }
+  if (pcm.length < PTT_MIN_BYTES || rms16(pcm) < RMS_GATE) { flash(PTT_MISSED, 3000); restoreKnotState(); return; }
   const settings = store.getSettings();
   const stt = createSTT(settings);
   if (!stt.available) { flash(STANDALONE ? 'Add a Gemini key in Settings, or reinstall to restore the local speech model.' : 'No transcription yet. Run voice setup in the desktop app, or add a Gemini key.', 5000); restoreKnotState(); return; }
@@ -3696,7 +3827,8 @@ async function pttStop(reason) {
   try { res = await stt.transcribe(pcm); } catch (e) { res = { text: '', error: { message: e.message } }; }
   const text = cleanTranscript(res && res.text);
   console.log('[ptt] ' + (Date.now() - t0) + 'ms via ' + (res && res.provider || '?') + ': ' + (text ? JSON.stringify(text) : '(nothing)') + (reason ? ' [' + reason + ']' : ''));
-  if (!text) { flash(res && res.error ? 'Transcription failed: ' + String(res.error.message || '').slice(0, 200) : 'I did not catch that.', 3500); restoreKnotState(); return; }
+  if (!text && res && res.error) routeLog('ptt: transcription failed via ' + (res.error.provider || '?') + ': ' + String(res.error.message || '').slice(0, 200));
+  if (!text) { flash(res && res.error ? (IS_MAC ? MAC_STT_FAILED : 'Transcription failed: ' + String(res.error.message || '').slice(0, 200)) : 'I did not catch that.', 3500); restoreKnotState(); return; }
   routeUtterance(text, 'voice');
 }
 
@@ -3827,7 +3959,10 @@ function tourCaps() {
   let source = false;
   try { const l = guideLlm(); source = !!(l && l.ready); } catch (_) { source = false; }
   // A host with no tourAi (the desktop app) has its own Claude: guideLlm says so.
-  return { whisper, source, cli: false, keyReady: typeof hooks.tourAi !== 'function' && source, hands: probeReady(), english: Tour.englishLocale(app.getLocale()), ptt: ptt.accelerator || store.getSettings().shortcuts.ptt, device: '', desktopApp: !STANDALONE,
+  // mac: the Mac beta's cards (tour.js): no microphone card, no Hands card, typed asks.
+  const mac = IS_MAC, macTyped = IS_MAC && !macSpeechReady();
+  if (macTyped) whisper = false;
+  return { mac, macTyped, whisper, source, cli: false, keyReady: typeof hooks.tourAi !== 'function' && source, hands: probeReady(), english: Tour.englishLocale(app.getLocale()), ptt: ptt.accelerator || store.getSettings().shortcuts.ptt, device: '', desktopApp: !STANDALONE,
     island: islandOn(), hideFromCapture: captureHidden(), captureForcedOff: Boolean(process.env.JARVIS_NO_PROTECT || process.env.NUS_NO_PROTECT), voice: tourVoiceInfo() };
 }
 // Who answers, as the host sees it: Claude Code installed, or a key saved.
@@ -3901,6 +4036,8 @@ function tourStart(from) {
   if (tour) { tourCardOut({ spoken: '' }); return; }
   tour = { step: from === 'hello' ? Tour.STEP.hello : 1, name: '', qa: Tour.QUESTIONS.map((q) => ({ q: q.q, a: '' })), hear: null, caps: tourCaps(), from: from || 'home', handsRunning: false, handsAbort: false, shown: false, voiceWas: null };
   tour.voiceWas = tour.caps.voice.installed;
+  // A card this computer skips (the Mac's microphone card) is skipped at the start too, not only on Continue.
+  while (tour.step >= 1 && tour.step < Tour.OF && Tour.skipStep(tour.step, tour.caps)) tour.step += 1;
   routeLog('tour start (' + tour.from + ')');
   handsAppList();   // the app catalog loads now, so Notepad is known by card 9
   tourAskAi();
@@ -3946,6 +4083,17 @@ async function tourHello(T) {
         pos: Object.assign({ island: islandOn() }, knotFraction()),
       });
     } catch (e) { result = { outcome: 'skipped', why: e.message, typed: 0 }; }
+    T.handsRunning = false;
+    send('hands:state', { active: false, waiting: false });
+    if (!harness.active && !selection && !(agent && agent.active())) disarmEsc();
+  } else if (IS_MAC) {
+    // The Mac hello (companion/src/mac-hello.js): TextEdit, the same words, one Automation prompt at
+    // most, and nothing typed if it is refused. Esc stops it, as on Windows.
+    T.handsRunning = true; T.handsAbort = false;
+    armEsc();
+    send('hands:state', { active: true, waiting: false });
+    try { result = await require('./src/mac-hello').runMacHello(Hello.text(Hello.STUNT_PICK, Object.assign({ island: islandOn() }, knotFraction())), { aborted: () => tour !== T || T.handsAbort }); }
+    catch (e) { result = { outcome: 'skipped', why: e.message, typed: 0 }; }
     T.handsRunning = false;
     send('hands:state', { active: false, waiting: false });
     if (!harness.active && !selection && !(agent && agent.active())) disarmEsc();
@@ -4077,6 +4225,8 @@ function tourFirstWin(struggle) {
       const item = getReminders().add({ kind: 'reminder', at: Date.now() + 25 * 60000, what: 'Homework check: how far did you get? Tell me the next step.' });
       if (item) { noteWin('reminder'); setTimeout(() => flash('25 minutes, feeds closed. I will check in ' + whenLabel(item.at) + '.', 5000), 4500); }
     } else if (struggle === 'find_in_apps') routeUtterance('What is this window for, and where is the most useful button on it?', 'typed');
+    else if (struggle === 'remember' && IS_MAC && !macSpeechReady()) flash('Click me and type "remember that" and anything. Like: remember that my exam is Friday.', 8000);
+    else if (struggle === 'remember' && IS_MAC) flash('Press Control, Option and Space, say "remember that" and anything, then press them again. Like: remember that my exam is Friday.', 8000);
     else if (struggle === 'remember') flash('Hold ' + String(keys).replace(/\+/g, ' and ') + ' and say "remember that" and anything. Like: remember that my exam is Friday.', 8000);
   }, 700);
 }
@@ -4111,6 +4261,9 @@ function tourNext() {
   if (guide && guide.active()) guide.dismiss('tour');
   else if (tour.shown) send('guide:done', { sessionId: null });
   tour.step += 1;
+  // The Mac beta skips the cards for what it does not have: the microphone check when it cannot
+  // hear words, and Hands. The step numbers stay the same so Windows is untouched.
+  while (tour.step < Tour.OF && Tour.skipStep(tour.step, tour.caps)) tour.step += 1;
   tour.hear = Tour.hearFor(tour.step);
   tour.shown = false;
   tourCardOut();
@@ -4674,7 +4827,7 @@ async function rewriteSelection(ask, source, heardAt) {
   if (llm) getLedger().record({ feature: 'rewrite', provider: llm.provider || '', model: llm.model || '', outcome: r.outcome === 'error' ? 'error' : 'ok', ms: Date.now() - (heardAt || t0), timings: { model_done: modelMs }, note: ask.style + ', ' + r.outcome + (r.sel ? ', ' + (r.sel.process || '') : '') });
   const ok = [{ id: 'dismiss', label: 'OK' }];
   const bubble = (text, extra) => send('guide:bubble', Object.assign({ text, anchor: 'knot', task: 'ask', actions: ok, sessionId: null }, extra || {}));
-  if (r.outcome === 'replaced') bubble('Rewritten. Ctrl+Z puts it back.', { kicker: 'rewritten' });
+  if (r.outcome === 'replaced') bubble(IS_MAC ? 'Rewritten. Command+Z puts it back.' : 'Rewritten. Ctrl+Z puts it back.', { kicker: 'rewritten' });
   else if (r.outcome === 'same') bubble('It already reads well. I left it as it was.');
   else if (r.outcome === 'password') bubble('I will not read or change a password field.');
   else if (r.outcome === 'too-long') bubble('That is a lot of text. Select a paragraph or two and ask again.');
@@ -4716,7 +4869,9 @@ async function answerPage(pg, ask, source, heardAt) {
 }
 
 // The chord's final key is what the probe watches for the release.
-const PTT_FALLBACKS = ['CommandOrControl+Alt+Space', 'CommandOrControl+Shift+M', 'Alt+Shift+Space', 'CommandOrControl+Alt+M'];
+// On a Mac, Command+Option+Space is Finder search, so it is not offered there.
+const PTT_FALLBACKS = IS_MAC ? ['Control+Alt+Space', 'Control+Alt+K', 'CommandOrControl+Shift+M', 'Alt+Shift+Space']
+  : ['CommandOrControl+Alt+Space', 'CommandOrControl+Shift+M', 'Alt+Shift+Space', 'CommandOrControl+Alt+M'];
 function vkOf(accelerator) {
   const key = String(accelerator || '').split('+').pop();
   if (/^space$/i.test(key)) return 32;
@@ -4734,6 +4889,10 @@ function registerPttShortcut() {
   // Installs from before 2026-11-02 carry the old default in their settings;
   // a key the person never chose moves with the default.
   if (wanted.toLowerCase() === LEGACY_PTT_SHORTCUT.toLowerCase() && !(settings.shortcuts && settings.shortcuts.pttChosen)) wanted = DEFAULT_PTT_SHORTCUT;
+  // A Mac cannot watch two modifiers held alone (no probe), and the stored default is the
+  // Windows one ('Control+Alt'): the Mac key takes its place (the Mac lag walk saw the
+  // fallback land on Command+Option+Space, which is Finder search).
+  if (IS_MAC && modifierChord(wanted)) wanted = MAC_PTT_SHORTCUT;
   const stt = createSTT(settings);
   const sttNote = ', transcription: ' + (stt.available ? stt.providers.join(' > ') : 'none');
   if (modifierChord(wanted)) {
@@ -4759,7 +4918,7 @@ function registerPttShortcut() {
   for (const accel of candidates) {
     if (RESERVED_SHORTCUTS.has(accel.toLowerCase()) && accel.toLowerCase() !== LEGACY_PTT_SHORTCUT.toLowerCase()) continue;
     let ok = false;
-    try { ok = globalShortcut.register(accel, pttStart); } catch (_) { ok = false; }
+    try { ok = globalShortcut.register(accel, IS_MAC ? pttPressMac : pttStart); } catch (_) { ok = false; }
     if (!ok) continue;
     ptt.accelerator = accel;
     ptt.vk = vkOf(accel);
@@ -5122,6 +5281,7 @@ function sendPowerState() {
 }
 function startCursorProbe() {
   if (cursorProbeTimer) return; // never stack probes across enable/disable
+  if (EXP.cursorMs === 0) return;
   cursorProbeTimer = setInterval(() => {
     const p = screen.getCursorScreenPoint();
     // The pad stands aside while Hands has the mouse, as the overlay does.
@@ -5134,7 +5294,7 @@ function startCursorProbe() {
     cursorInside = true;
     overlayMouse.tick(true);
     send('cursor:probe', { x: p.x - b.x, y: p.y - b.y, touch: Boolean(touchPad && touchPad.touching()), handsMoving: !pillMayTakeMouse() });
-  }, 120);
+  }, EXP.cursorMs || 120);
 }
 function stopCursorProbe() {
   if (cursorProbeTimer) { clearInterval(cursorProbeTimer); cursorProbeTimer = null; }

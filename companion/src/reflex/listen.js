@@ -14,7 +14,9 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { pcmToWav, rms16 } = require('../wav');
-const { sharedWhisperServer, serverBeside, audioCtxFor } = require('../../../src/whisper-server');
+const { sharedWhisperServer, serverBeside, runnableCopy, audioCtxFor } = require('../../../src/whisper-server');
+// whisper-cli.exe on Windows; whisper-cli on a Mac (the Mac beta bundles one, built on the macOS runner).
+const CLI_NAME = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
 
 const RATE = 16000;
 const BYTES_PER_MS = (RATE * 2) / 1000;
@@ -37,7 +39,7 @@ function findWhisper(userData) {
   dirs.push(path.join(__dirname, '..', '..', '..', 'vendor', 'whisper'));
   dirs.push(path.join(__dirname, '..', '..', '..', '..', 'nus-desktop', 'vendor', 'whisper'));
   let exe = null;
-  for (const d of dirs) { const f = path.join(d, 'whisper-cli.exe'); if (fs.existsSync(f)) { exe = f; break; } }
+  for (const d of dirs) { const f = path.join(d, CLI_NAME); if (fs.existsSync(f)) { exe = runnableCopy(f, userData); break; } }
   const mdirs = [];
   if (userData) mdirs.push(path.join(userData, 'whisper-models'));
   if (process.resourcesPath) mdirs.push(path.join(process.resourcesPath, 'whisper-models'));

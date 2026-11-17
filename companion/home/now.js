@@ -139,7 +139,10 @@
       }
       const v = panel.panelView([...tasks.values()], { now: now(), expanded: true });
       if (!v.cards.length) {
-        const line = state.settings && state.settings.hands === true
+        // A Mac has no Hands (Windows only): no offer to turn it on, no Notepad example.
+        const line = typeof window !== 'undefined' && window.NusMacWords && window.NusMacWords.mac
+          ? 'Hold ' + panel.keyLabel(state.accel) + ', ask something, and let go.'
+          : state.settings && state.settings.hands === true
           ? 'Hold ' + panel.keyLabel(state.accel) + ' and ask for something, like "open Notepad and write my to-do list".'
           : 'Hold ' + panel.keyLabel(state.accel) + ' and ask something. Turn Hands on below and it can click and type for you too.';
         say(box, 'empty:' + line, () => {

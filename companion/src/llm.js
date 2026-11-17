@@ -209,6 +209,9 @@ async function completeGemini({ apiKey, model, system, turns, imageDataUrl, maxT
 // person picked "Connect your plan". Same OpenAI-compatible path as above, tier names only.
 let publik = null;
 try { publik = require('./publik'); } catch (_) { publik = null; }
+// On a Mac each request's instructions also say it is a Mac (companion/src/computer-words.js).
+const { paramsWithComputer } = require('./computer-words');
+
 // Normal publik streams send their tokens within milliseconds of each other
 // (about 35 chunks in 0.5 s); 2.5 s of silence after text is a stall, not a pause.
 const PUBLIK_IDLE_AFTER_TEXT_MS = 2500;
@@ -220,8 +223,8 @@ function publikLLM() {
     const run = (args) => streamOpenAI({ ...args, apiKey: p.apiKey, baseURL: p.baseURL, idleAfterTextMs: PUBLIK_IDLE_AFTER_TEXT_MS, imageDataUrl: args.imageDataUrl ? publik.prepareImage(args.imageDataUrl) : args.imageDataUrl });
     return {
       provider: 'publik', model, apiKey: p.apiKey, ready: true,
-      stream: (params) => run({ maxTokens: 4096, ...params, model }),
-      complete: (params) => run({ maxTokens: params.maxTokens || 512, ...params, model: publik.model(tierOf(settings), params.model), onToken: params.onToken || params.onDelta || (() => {}) }),
+      stream: (params) => run({ maxTokens: 4096, ...paramsWithComputer(params), model }),
+      complete: (params) => run({ maxTokens: params.maxTokens || 512, ...paramsWithComputer(params), model: publik.model(tierOf(settings), params.model), onToken: params.onToken || params.onDelta || (() => {}) }),
     };
   };
 }
@@ -249,7 +252,7 @@ function createLLM(settings) {
     ready: !!apiKey && !!model,
     async stream(params) {
       if (DEBUG) console.log('[DEBUG LLM] stream() invoked for provider:', provider);
-      const args = { apiKey, model, maxTokens, ...params };
+      const args = { apiKey, model, maxTokens, ...paramsWithComputer(params) };
       if (provider === 'openai') return streamOpenAI(args);
       if (provider === 'nvidia') return streamOpenAI({ ...args, baseURL: 'https://integrate.api.nvidia.com/v1' });
       if (provider === 'anthropic') return streamAnthropic(args);
@@ -260,7 +263,7 @@ function createLLM(settings) {
       // params.model: one call on another model of the same provider (a problem
       // walkthrough wants the smart tier). Unset leaves the configured one.
       // params.onDelta: streamed text for callers that can use it as it arrives.
-      const args = { apiKey, maxTokens: params.maxTokens || 512, ...params, model: params.model || model, onToken: params.onToken || params.onDelta || (() => {}) };
+      const args = { apiKey, maxTokens: params.maxTokens || 512, ...paramsWithComputer(params), model: params.model || model, onToken: params.onToken || params.onDelta || (() => {}) };
       if (provider === 'gemini') return completeGemini(args);
       // The other SDKs stream fine; collect and return.
       if (provider === 'openai') return streamOpenAI(args);

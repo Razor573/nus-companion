@@ -130,6 +130,9 @@
 
   // A chord as the render words it: "Control+Alt" reads "Ctrl + Alt".
   function keyLabel(accel) {
+    // On a Mac: Control, Command and Option (renderer/mac-words.js sets the flag).
+    const mac = typeof window !== 'undefined' && !!(window.NusMacWords && window.NusMacWords.mac);
+    if (mac) return String(accel || 'Control+Alt+Space').split('+').map((k) => (k === 'CommandOrControl' ? 'Command' : k === 'Alt' ? 'Option' : k)).join(' + ');
     return String(accel || 'Control+Alt').split('+').map((k) => (k === 'Control' || k === 'CommandOrControl' ? 'Ctrl' : k)).join(' + ');
   }
 

@@ -30,7 +30,7 @@ test('actual watcher idle wiring keeps running with open mic and clears only rea
 test('actual assignment handoff clears selection, composer and mic without flushing duplicate speech', () => {
   const close = source.slice(source.indexOf('function closeAssignmentMic('), source.indexOf('async function assignmentRoute('));
   const sent=[];
-  const ctx = { selectionGeneration:1, OPEN_MIC:true, ptt:{held:true,timer:null,chunks:[1],streaming:true}, listener:{reset(){ctx.resets++;}}, resets:0, send:(c,p)=>sent.push([c,p]), guide:null, selection:{}, harness:{active:false}, guideDismiss(){ctx.selection=null;}, win:{isDestroyed:()=>false,blur(){ctx.blurred=true;}}, overlayMouse:{set(v){ctx.ignore=v;}}, clearTimeout };
+  const ctx = { selectionGeneration:1, OPEN_MIC:true, ptt:{held:true,timer:null,chunks:[1],streaming:true}, listener:{reset(){ctx.resets++;}}, resets:0, send:(c,p)=>sent.push([c,p]), guide:null, selection:{}, harness:{active:false}, guideDismiss(){ctx.selection=null;}, win:{isDestroyed:()=>false,blur(){ctx.blurred=true;}}, overlayMouse:{set(v){ctx.ignore=v;}}, clearTimeout, stopMacReleaseWatch(){} };
   vm.runInNewContext(close + '; releaseAssignmentSelection(); closeAssignmentMic("voice");',ctx);
   assert.equal(ctx.selection,null); assert.equal(ctx.ptt.held,false); assert.equal(ctx.ptt.streaming,false); assert.equal(ctx.resets,1);
   assert.equal(ctx.ignore,true); assert.ok(sent.some(s=>s[0]==='assignment:takeover'));

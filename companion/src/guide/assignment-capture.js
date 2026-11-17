@@ -1,4 +1,5 @@
 'use strict';
+const { createScreenPoints } = require('../screen-points');
 
 function sameForeground(a, b) {
   if (!a || !b) return false;
@@ -27,12 +28,13 @@ function maskBitmap(buf, width, height, rect) {
 
 async function captureAssignment({ foreground, bubbleRect, model = false, captureDisplay, electron, now = () => performance.now() }) {
   const { screen, nativeImage } = electron;
+  const points = createScreenPoints(screen);
   const fg = await foreground();
   if (!fg?.rect || fg.rect.w <= 0 || fg.rect.h <= 0) return null;
-  const dip = screen.screenToDipPoint({ x: Math.round(fg.rect.x + fg.rect.w / 2), y: Math.round(fg.rect.y + fg.rect.h / 2) });
+  const dip = points.screenToDip({ x: Math.round(fg.rect.x + fg.rect.w / 2), y: Math.round(fg.rect.y + fg.rect.h / 2) });
   const display = screen.getDisplayNearestPoint(dip), scale = display.scaleFactor || 1;
   const physicalSize = { width: Math.round(display.bounds.width * scale), height: Math.round(display.bounds.height * scale) };
-  const origin = screen.dipToScreenPoint({ x: display.bounds.x, y: display.bounds.y });
+  const origin = points.dipToScreen({ x: display.bounds.x, y: display.bounds.y });
   // OCR needs near-native pixels: at 960 px a 1776 px Firefox window read as the
   // WeBWorK header only, so every automatic look failed the homework check (2026-09-28).
   const maxSide = model ? 1568 : 2048;
@@ -46,8 +48,8 @@ async function captureAssignment({ foreground, bubbleRect, model = false, captur
   const size = cap.image.getSize();
   let image = cap.image;
   if (bubbleRect) {
-    const p = screen.dipToScreenPoint({ x: Math.round(bubbleRect.x), y: Math.round(bubbleRect.y) });
-    const q = screen.dipToScreenPoint({ x: Math.round(bubbleRect.x + bubbleRect.w), y: Math.round(bubbleRect.y + bubbleRect.h) });
+    const p = points.dipToScreen({ x: Math.round(bubbleRect.x), y: Math.round(bubbleRect.y) });
+    const q = points.dipToScreen({ x: Math.round(bubbleRect.x + bubbleRect.w), y: Math.round(bubbleRect.y + bubbleRect.h) });
     const mask = imageRect({ x: p.x, y: p.y, w: q.x - p.x, h: q.y - p.y }, origin, physicalSize, size);
     if (mask) image = nativeImage.createFromBitmap(maskBitmap(image.toBitmap(), size.width, size.height, mask), size);
   }
@@ -57,7 +59,7 @@ async function captureAssignment({ foreground, bubbleRect, model = false, captur
   const cropped = image.getSize(), longest = Math.max(cropped.width, cropped.height);
   if (longest > maxSide) image = image.resize({ width: Math.round(cropped.width * maxSide / longest), height: Math.round(cropped.height * maxSide / longest), quality: 'good' });
   const jpeg = image.toJPEG(model ? 82 : 72), out = image.getSize();
-  const mouse = screen.dipToScreenPoint(screen.getCursorScreenPoint());
+  const mouse = points.dipToScreen(screen.getCursorScreenPoint());
   const cursor = { x: Math.max(0, Math.min(1, (mouse.x - fg.rect.x) / fg.rect.w)), y: Math.max(0, Math.min(1, (mouse.y - fg.rect.y) / fg.rect.h)) };
   const result = { jpeg, ...out, display: cap.display, foreground: fg, cursor, blockMs: (cap.blockMs || 0) + now() - blockedAt, dataUrl: model ? 'data:image/jpeg;base64,' + jpeg.toString('base64') : null };
   return result;

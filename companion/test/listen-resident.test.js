@@ -49,6 +49,7 @@ test('when the resident whisper cannot answer, whisper-cli does, and every press
 test('key up stops a whisper-cli partial that heard less than was said, instead of waiting for it', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-listen-'));
   fs.writeFileSync(path.join(dir, 'whisper-cli.exe'), '');
+  fs.writeFileSync(path.join(dir, 'whisper-cli'), '');   // the Mac name (companion/src/reflex/listen.js CLI_NAME)
   fs.mkdirSync(path.join(dir, 'whisper-models'));
   fs.writeFileSync(path.join(dir, 'whisper-models', 'ggml-base.en-q5_1.bin'), '');
   const prev = process.env.NUS_WHISPER_DIR;

@@ -96,7 +96,7 @@
   function shortcutParts(accelerator) {
     const labels = {
       CommandOrControl: nus.platform === 'darwin' ? '⌘' : 'Ctrl',
-      Command: '⌘', Control: 'Ctrl', Super: 'Super',
+      Command: '⌘', Control: nus.platform === 'darwin' ? '⌃' : 'Ctrl', Super: 'Super',
       Alt: nus.platform === 'darwin' ? '⌥' : 'Alt',
       Shift: nus.platform === 'darwin' ? '⇧' : 'Shift',
       Return: 'Enter', Escape: 'Esc', Space: 'Space',
@@ -602,7 +602,7 @@
     if (!standalone && isCmdOrCtrl(e) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
       e.preventDefault();
       const text = input.value.trim();
-      if (!text) { showStatus('Type a question first, then Ctrl+Shift+D to ask the whole vault.'); return; }
+      if (!text) { showStatus('Type a question first, then ' + cmdKey + '+Shift+D to ask the whole vault.'); return; }
       input.value = ''; syncPlaceholder();
       setBusy(true);
       nus.deepQuery(text);
@@ -765,7 +765,7 @@
     nus.log('mic: ' + found.list.length + ' input device(s), default ' + (found.defaultLabel || 'unnamed') + (settings && settings.micDeviceId ? ', picked ' + (settings.micDeviceLabel || 'one') : ''));
     const want = NM.choose(found, settings || {});
     // The chosen one is not plugged in: the Windows default stands in, said once per device.
-    if (want.why === 'missing' && micMissingSaid !== want.wanted) { micMissingSaid = want.wanted; showStatus((want.wanted || 'Your microphone') + ' is not plugged in. Using ' + (want.label || 'the Windows default') + '.'); }
+    if (want.why === 'missing' && micMissingSaid !== want.wanted) { micMissingSaid = want.wanted; showStatus((want.wanted || 'Your microphone') + ' is not plugged in. Using ' + (want.label || (/Mac/.test(navigator.platform || '') ? 'the Mac default' : 'the Windows default')) + '.'); }
     try {
       const stream = await navigator.mediaDevices.getUserMedia(NM.constraints(want.id));
       micOpenId = want.id;
@@ -819,7 +819,7 @@
       micLastError = (err && err.name) || 'Error';
       micOpenId = null;
       const message = (err && err.name === 'NotAllowedError')
-        ? 'Microphone blocked. Allow it in Windows Settings > Privacy > Microphone, then click Listen again.'
+        ? (/Mac/.test(navigator.platform || '') ? 'Microphone blocked. Allow it in System Settings > Privacy & Security > Microphone, then click Listen again.' : 'Microphone blocked. Allow it in Windows Settings > Privacy > Microphone, then click Listen again.')
         : (err && err.name === 'NotFoundError')
           ? 'No microphone found. Plug one in and click Listen again.'
           : 'Microphone failed: ' + (err && err.message);
@@ -1189,7 +1189,7 @@
     if (!key && /^[0-9]$/.test(e.key)) key = e.key;
     if (!key && /^F(?:[1-9]|1[0-9]|2[0-4])$/.test(e.key)) key = e.key;
     if (!key) return { error: 'Use a letter, number, function key, arrow, or common navigation key.' };
-    if (!parts.length && !/^F/.test(key)) return { error: 'Include Command/Ctrl, Alt, or Shift in the shortcut.' };
+    if (!parts.length && !/^F/.test(key)) return { error: nus.platform === 'darwin' ? 'Include Command, Control, Option, or Shift in the shortcut.' : 'Include Command/Ctrl, Alt, or Shift in the shortcut.' };
     parts.push(key);
     return { accelerator: parts.join('+') };
   }
@@ -2376,6 +2376,19 @@
     if (!isShown(el)) return;
     if (guideTask === 'solve') { layoutAssignmentOverlays(); return; }
     placeSlot(el);
+    if (el === quickAsk) clearOfTour(el);
+  }
+  // The ask line and a tour card are both placed in the Knot's slot, and the card is drawn on top: a
+  // card that says "click me and type" covered the very line it asked for (a tester's Mac, 2026-11-15).
+  // With a card up, the line sits just above the card, or just below it, and only if neither fits
+  // does it go on top of the card.
+  function clearOfTour(el) {
+    el.classList.remove('over-tour');
+    if (!isShown(tourEl)) return;
+    const t = tourEl.getBoundingClientRect(), h = el.offsetHeight, H = window.innerHeight, gap = 10;
+    const top = t.top - h - gap >= 8 ? t.top - h - gap : t.bottom + gap + h <= H - 8 ? t.bottom + gap : null;
+    if (top == null) { el.classList.add('over-tour'); return; }
+    el.style.top = Math.round(top) + 'px';
   }
   function positionBubble() {
     if (!isShown(bubble)) return;

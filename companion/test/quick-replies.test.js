@@ -335,7 +335,7 @@ test('which lines are missing is answered without reading their audio', async ()
 test('a reply cut off says no more of its lines; the next reply speaks', () => {
   const body = main.slice(main.indexOf('let speakMuteUntil ='), main.indexOf('// What the Companion knows'));
   const sent = [];
-  const ctx = { hooks: {}, ptt: { held: false }, listener: null, win: { isDestroyed: () => false, webContents: { send: (c, p) => sent.push([c, p]) } }, Date, Map, String };
+  const ctx = { hooks: {}, ptt: { held: false }, listener: null, win: { isDestroyed: () => false, webContents: { send: (c, p) => sent.push([c, p]) } }, Date, Map, String, IS_MAC: false };
   vm.runInNewContext(body, ctx);
   const say = (text, first, stream) => vm.runInNewContext('send("guide:say", ' + JSON.stringify({ text, first, stream, sessionId: null }) + ')', ctx);
   say('Paris is the capital.', true, 'answer:1');

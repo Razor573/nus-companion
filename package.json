@@ -13,7 +13,8 @@
     "start:companion": "electron src/main-companion.js",
     "smoke:companion": "electron src/main-companion.js --smoke",
     "dist:companion": "electron-builder --win --config electron-builder.companion.config.js --publish never",
-    "dist:check:companion": "node scripts/package-security-check.js --profile=companion"
+    "dist:check:companion": "node scripts/package-security-check.js --profile=companion",
+    "dist:companion:mac": "electron-builder --mac --config electron-builder.companion.config.js --publish never"
   },
   "engines": {
     "node": ">=18"

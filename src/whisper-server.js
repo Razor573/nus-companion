@@ -207,4 +207,35 @@ function sharedWhisperServer({ exe, model, log } = {}) {
   return shared.get(key);
 }
 
-module.exports = { createWhisperServer, sharedWhisperServer, serverBeside, formBody, audioCtxFor, httpRequest };
+// macOS (the Mac beta): whisper-cli and whisper-server ship inside the app, ad-hoc signed and not
+// notarized. A file that came from a download carries macOS's quarantine flag, and Gatekeeper can
+// refuse to start a flagged, unnotarized helper even after the person allowed the app itself. So on
+// a Mac the two binaries run from a copy in the app's own data folder: files the app writes itself
+// carry no quarantine flag. The copy is made once per binary size and redone when the app's own
+// copy changes. Elsewhere, and whenever the copy cannot be made, the original path is returned.
+// -> the path to run (whisper-cli's; whisper-server sits beside it, so serverBeside finds it).
+function runnableCopy(cliPath, userData, { platform = process.platform, fsImpl = fs, log = () => {} } = {}) {
+  if (platform !== 'darwin' || !cliPath || !userData) return cliPath;
+  try {
+    const srcDir = path.dirname(cliPath);
+    const servers = platform === 'win32' ? ['whisper-server.exe', 'server.exe'] : ['whisper-server', 'server'];
+    const names = [path.basename(cliPath), ...servers].filter((n, i, a) => a.indexOf(n) === i && fsImpl.existsSync(path.join(srcDir, n)));
+    const stamp = names.map((n) => n + '-' + fsImpl.statSync(path.join(srcDir, n)).size).join('_');
+    const dir = path.join(userData, 'whisper-bin', crypto.createHash('sha1').update(stamp).digest('hex').slice(0, 12));
+    for (const n of names) {
+      const to = path.join(dir, n);
+      if (fsImpl.existsSync(to) && fsImpl.statSync(to).size === fsImpl.statSync(path.join(srcDir, n)).size) continue;
+      fsImpl.mkdirSync(dir, { recursive: true });
+      fsImpl.copyFileSync(path.join(srcDir, n), to + '.part');
+      fsImpl.chmodSync(to + '.part', 0o755);
+      fsImpl.renameSync(to + '.part', to);
+      log('whisper: copied ' + n + ' to the data folder');
+    }
+    return path.join(dir, path.basename(cliPath));
+  } catch (e) {
+    log('whisper: copy failed, running from the app: ' + (e && e.message));
+    return cliPath;
+  }
+}
+
+module.exports = { createWhisperServer, sharedWhisperServer, serverBeside, runnableCopy, formBody, audioCtxFor, httpRequest };

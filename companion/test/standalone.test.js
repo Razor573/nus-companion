@@ -13,10 +13,15 @@ test('standalone archive includes only its entry point and isolated home', () =>
   assert.ok(c.files.includes('!node_modules/@supabase/**'));assert.ok(c.files.includes('!node_modules/electron-updater/**'));assert.ok(c.files.includes('!**/*.bak-*'));
   assert.equal(c.publish[0].repo,'nus-companion');
   assert.ok(!c.files.includes('src/**/*'));assert.ok(!c.files.includes('renderer/**/*'));assert.ok(c.files.includes('!src/config.js'));
-  assert.ok(!c.protocols && !c.mac && !c.dmg && !c.afterPack);
+  assert.ok(!c.protocols);
+  // The Mac beta (2026-11-15): an ad-hoc signed arm64 dmg, never notarized or hardened from this config.
+  assert.deepEqual(c.mac.target, [{ target: 'dmg', arch: ['arm64'] }]);
+  assert.equal(c.mac.identity, null); assert.equal(c.mac.hardenedRuntime, false); assert.equal(typeof c.afterPack, 'function');
   assert.ok(c.win.extraResources.some(r=>r.filter.includes('hands.ps1')));
   assert.ok(c.win.extraResources.some(r=>r.to==='whisper-models'));
-  assert.ok(c.asarUnpack.includes('companion/src/win/ocr.ps1'));
+  // The host packs its own native binaries: Windows keeps the OCR script unpacked, a Mac leaves the Windows helpers out.
+  if (process.platform === 'darwin') { assert.ok(c.files.includes('!companion/src/win/*.ps1')); assert.ok(c.asarUnpack.includes('node_modules/sherpa-onnx-darwin-arm64/**')); }
+  else assert.ok(c.asarUnpack.includes('companion/src/win/ocr.ps1'));
 });
 test('standalone establishes its profile and capture worker before Companion imports', () => {
   const s=read('src/main-companion.js');

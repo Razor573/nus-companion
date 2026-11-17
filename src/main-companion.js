@@ -63,6 +63,10 @@ const routinesFile = path.join(userData, 'reflex-routines.json');
 const notesFile = path.join(userData, 'companion', 'notes.md');
 const homeFile = path.join(__dirname, '..', 'companion', 'home', 'index.html');
 const SMOKE = process.argv.includes('--smoke');
+// The Mac beta: the update check, the signed channel and its notices are Windows only (every
+// installer they point at is a Windows one), and so is the exam guard (it looks for the Windows
+// LockDown Browser). Off on a Mac with no timer and no request.
+const WINDOWS = process.platform === 'win32';
 const ALLOWED_EXTERNAL = new Set(['https://typesafe.ai', 'https://aistudio.google.com/apikey', 'https://console.anthropic.com', 'https://github.com/potlakai/nus-desktop/releases']);
 function send(channel, value) { if (home && !home.isDestroyed()) home.webContents.send(channel, value); }
 // Packaged: the version electron-builder stamped. A dev run reports Electron's
@@ -362,7 +366,7 @@ function registerHomeIpc() {
   handle('home:publik:choice', (choice) => { if (publik) { publik.setChoice(String(choice || '')); stats.aiSource(publik.choice()); } return { choice: publik ? publik.choice() : null }; });
   handle('home:status', async () => ({ ...companion.status(), ai: await ai.status(), llmReady: createLLM(store.getSettings()).ready, publik: publik ? { on: true, choice: publik.choice() } : { on: false }, version: companionVersion(),
     ...(stats.status().firstRun ? (stats.onboardingStep('stats_notice_seen'), {}) : {}),
-    hotkeys: { ptt: companion.status().ptt.accelerator, assist: store.getSettings().shortcuts.assist, select: 'Ctrl+Shift+T', toggle: 'Ctrl+Shift+Space', panic: 'Ctrl+Shift+X' },
+    hotkeys: { ptt: companion.status().ptt.accelerator, assist: store.getSettings().shortcuts.assist, ...(process.platform === 'darwin' ? { select: 'Control+Shift+T', toggle: 'Control+Shift+Space', panic: 'Control+Shift+X' } : { select: 'Ctrl+Shift+T', toggle: 'Ctrl+Shift+Space', panic: 'Ctrl+Shift+X' }) },
     displays: screen.getAllDisplays().map(d => ({ id: d.id, label: d.label || d.size.width + ' × ' + d.size.height })),
     contentProtection: companion.status().captureHidden !== false,
     captureForcedOff: Boolean(process.env.JARVIS_NO_PROTECT || process.env.NUS_NO_PROTECT),
@@ -484,7 +488,7 @@ function registerHomeIpc() {
   handle('home:ptt:set', value => { const r = companion.setPttShortcut(value); scheduleSync(); return r; });
   handle('home:open-external', url => { if (!ALLOWED_EXTERNAL.has(url) && !/^https:\/\/github\.com\/potlakai\/nus-desktop\/releases(\/|$)/.test(String(url))) throw new Error('Link is not allowed.'); return shell.openExternal(url); });
   // The newer-version card: check now, or hide it for this version.
-  handle('home:update:check', () => getUpdateCheck().check(true));
+  handle('home:update:check', () => (WINDOWS ? getUpdateCheck().check(true) : getUpdateCheck().state()));
   handle('home:update:dismiss', () => getUpdateCheck().dismiss());
   handle('home:update:run', () => { getOneClick().run(); return updateState(); });
   handle('home:map:get', () => { const p = api.getPreferences(); return { layout: p.companion_map_layout || {}, viewport: p.companion_map_viewport || null }; });
@@ -559,12 +563,12 @@ app.whenReady().then(async () => {
     ui.close();
     gateCount.passed(signed && signed.choice);
   }
-  examGuard.watch();
+  if (WINDOWS) examGuard.watch();
   const database = await open(path.join(userData, 'data'));
   databaseReady = true;
   secrets.init(userData); sttLocal.init({ userData });
   folders = createFolders({ api, database, userData, onProgress: value => send('home:indexing', value) });
-  companion = companionApp.initCompanion({ standalone: true, desktopComplete: (p,o) => ai.complete(p,o), desktopWarm: o => ai.warm(o),
+  companion = companionApp.initCompanion({ standalone: true, desktopComplete: (p,o) => ai.complete(p, require('../companion/src/computer-words').paramsWithComputer(o || {})), desktopWarm: o => ai.warm(o),
     audioRoot: () => path.join(userData,'companion','audio'), showDesktop: openHome,
     showFeedback: () => { const w = openHome(); const go = () => send('home:view', { view: 'feedback' }); if (w.webContents.isLoading()) w.webContents.once('did-finish-load', go); else go(); },
     showMyNus: () => { const w = openHome(); const go = () => send('home:view', { view: 'mynus' }); if (w.webContents.isLoading()) w.webContents.once('did-finish-load', go); else go(); },
@@ -656,7 +660,7 @@ app.whenReady().then(async () => {
   registerHomeIpc();
   // The daily version check: at start and every six hours after (the check
   // itself only asks GitHub once a day); never in smoke runs.
-  if (!process.argv.includes('--smoke')) {
+  if (!process.argv.includes('--smoke') && WINDOWS) {
     // A minute in: the installer that restarted us may still be closing.
     setTimeout(() => getOneClick().cleanup(), 60000).unref();
     setTimeout(() => channelCheck().catch(() => {}), 15000);

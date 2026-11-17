@@ -191,7 +191,7 @@ test('the Companion routes a rewrite ahead of the reflex layer and Hands, and pa
   assert.match(slow, /guide\.active\(\) && \(rewriteAsk\(kind\.text\) \|\| handsClaims/, 'a pointing guide gives way to a rewrite');
   assert.match(main, /if \(!wasActive && ownPath\(p\.text\)\) \{ routeUtteranceSlow\(/, 'typed asks too');
   assert.match(main, /getHands\(\)\.request\('keys\.text', \{ text, hwnd: sel\.hwnd, selfPid: process\.pid, max: 20000 \}/);
-  assert.match(main, /bubble\('Rewritten\. Ctrl\+Z puts it back\.'/);
+  assert.match(main, /bubble\(IS_MAC \? 'Rewritten\. Command\+Z puts it back\.' : 'Rewritten\. Ctrl\+Z puts it back\.'/);
   assert.match(main, /COPY_SKIP = \/\^\(\?:windowsterminal/, 'no Ctrl+C in a terminal');
   assert.match(main, /if \(r && r\.pattern\) return \{ text: '' \};/, 'no copy when the app said nothing is selected');
 });
