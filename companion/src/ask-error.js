@@ -9,7 +9,7 @@
 // Pure, no Electron: the guide, Hands, the assignment helper and index.js all
 // call it. get-started.js keeps its own words for the key box ("paste it here").
 
-const NAMES = { publik: 'publik', gemini: 'Gemini', anthropic: 'Anthropic', openai: 'OpenAI', nvidia: 'Nvidia', cli: 'Claude Code', 'claude-code': 'Claude Code', 'claude (desktop)': 'Claude Code' };
+const NAMES = { publik: 'publik', gemini: 'Gemini', vertex: 'Vertex AI', 'gemini-web': 'Gemini Web', anthropic: 'Anthropic', openai: 'OpenAI', nvidia: 'Nvidia', cli: 'Claude Code', 'claude-code': 'Claude Code', 'claude (desktop)': 'Claude Code' };
 
 const NET = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|network|getaddrinfo|socket hang up/i;
 const SIGNED_OUT = /cli_not_logged_in|not logged in|\/login|failed to authenticate|oauth|session expired/i;
@@ -20,6 +20,7 @@ function providerName(provider, text) {
   const p = String(provider || '').toLowerCase();
   if (NAMES[p]) return NAMES[p];
   if (/^cli_|claude code/i.test(text)) return 'Claude Code';
+  if (/aiplatform|vertex/i.test(text)) return 'Vertex AI';
   if (/generativelanguage|gemini/i.test(text)) return 'Gemini';
   if (/anthropic|x-api-key/i.test(text)) return 'Anthropic';
   if (/nvidia|nvapi/i.test(text)) return 'Nvidia';

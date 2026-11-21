@@ -45,6 +45,13 @@ function plainKeyError(provider, raw) {
     if (/location|region|not supported/i.test(text)) return 'Google does not offer the free Gemini key where you are. Claude Code or an Anthropic key in Settings works instead.';
     return 'That key did not work. Copy it again from AI Studio and paste it here.';
   }
+  if (provider === 'vertex') {
+    if (/no key|credentials/i.test(text)) return 'Paste a Vertex AI service account JSON or configure gcloud ADC first.';
+    if (net.test(text)) return 'Nūs could not reach Google Cloud Vertex AI. Check your internet, then press Test again.';
+    if (/\b40[13]\b|PERMISSION_DENIED|UNAUTHENTICATED|invalid_grant/i.test(text)) return 'Vertex AI did not accept these credentials or project. Check IAM permissions and project ID.';
+    if (/\b404\b|NOT_FOUND/i.test(text)) return 'Vertex AI model or project was not found. Check the model ID and project in Settings.';
+    return 'Vertex AI test failed. Check your service account JSON and project ID.';
+  }
   if (provider === 'nvidia') {
     if (/no key/i.test(text)) return 'Paste a key from build.nvidia.com first.';
     if (net.test(text)) return 'Nūs could not reach Nvidia. Check your internet, then press Test again.';
@@ -74,12 +81,13 @@ function plainKeyError(provider, raw) {
 // first, then Claude Code on this computer.
 function answerSource({ keys = {}, cli = false, cliOk = false } = {}) {
   if (keys.gemini) return 'gemini';
+  if (keys.vertex) return 'vertex';
   if (keys.anthropic) return 'anthropic';
   if (keys.nvidia) return 'nvidia';
   if (cli && cliOk) return 'claude-code';
   return null;
 }
 
-const SOURCE_LABELS = { gemini: 'Gemini', anthropic: 'Anthropic', nvidia: 'Nvidia', 'claude-code': 'Claude Code' };
+const SOURCE_LABELS = { gemini: 'Gemini', vertex: 'Vertex AI', anthropic: 'Anthropic', nvidia: 'Nvidia', 'claude-code': 'Claude Code', 'gemini-web': 'Gemini Web (Unofficial)' };
 
 module.exports = { AI_STUDIO_URL, SOURCE_LABELS, geminiKeyShape, plainKeyError, answerSource };
