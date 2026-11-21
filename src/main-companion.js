@@ -1,5 +1,6 @@
 const worker = process.argv.find(a => /capture-worker\.js$/i.test(a));
 if (worker) { require(worker); return; }
+if (process.argv.includes('--mcp-stdio')) { require('../companion/src/mcp/stdio').createStdioBridge(); return; }
 
 const { app, BrowserWindow, ipcMain, dialog, shell, screen, powerMonitor, net } = require('electron');
 const { spawn } = require('child_process');
@@ -44,6 +45,11 @@ const secrets = require('./secrets');
 const sttLocal = require('./stt-local');
 const { open, api, setSaveStateListener } = require('./db');
 const { createLLM } = require('../companion/src/llm');
+const vertex = require('../companion/src/vertex');
+const { createMcpServerManager } = require('../companion/src/mcp/server');
+const { createTunnelManager } = require('../companion/src/mcp/tunnel');
+const { generateToken } = require('../companion/src/mcp/oauth');
+const { createElectronMcpToolDeps } = require('../companion/src/mcp/electron-bridge');
 const routines = require('../companion/src/reflex/routines');
 const { INTENTS } = require('../companion/src/reflex/router');
 const { normalizeFeeds } = require('../companion/src/reflex/focus-guard');
@@ -73,7 +79,7 @@ const SMOKE = process.argv.includes('--smoke');
 // installer they point at is a Windows one), and so is the exam guard (it looks for the Windows
 // LockDown Browser). Off on a Mac with no timer and no request.
 const WINDOWS = process.platform === 'win32';
-const ALLOWED_EXTERNAL = new Set(['https://typesafe.ai', 'https://aistudio.google.com/apikey', 'https://console.anthropic.com', 'https://github.com/potlakai/nus-desktop/releases']);
+const ALLOWED_EXTERNAL = new Set(['https://typesafe.ai', 'https://aistudio.google.com/apikey', 'https://console.anthropic.com', 'https://console.cloud.google.com', 'https://gemini.google.com/devmode', 'https://github.com/potlakai/nus-desktop/releases']);
 function send(channel, value) { if (home && !home.isDestroyed()) home.webContents.send(channel, value); }
 // Packaged: the version electron-builder stamped. A dev run reports Electron's
 // own version from app.getVersion(), so read the build config instead.
@@ -279,7 +285,18 @@ function applyAutostart(on) { autostart.apply(on); }
 function settingsPatch(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid settings.');
   const clean = {};
-  for (const key of ['openMic', 'persistTranscripts', 'saveAudio', 'speakReplies', 'smart', 'proactive', 'hideFromCapture', 'sounds', 'focusGuard', 'tasks', 'hands', 'knotIsland']) if (typeof patch[key] === 'boolean') clean[key] = patch[key];
+  for (const key of ['openMic', 'persistTranscripts', 'saveAudio', 'speakReplies', 'smart', 'proactive', 'hideFromCapture', 'sounds', 'focusGuard', 'tasks', 'hands', 'knotIsland', 'geminiWebOptIn', 'mcpEnabled']) if (typeof patch[key] === 'boolean') clean[key] = patch[key];
+  if (['gemini', 'vertex', 'anthropic', 'openai', 'nvidia', 'gemini-web'].includes(patch.provider)) clean.provider = patch.provider;
+  if (typeof patch.vertexProject === 'string' && patch.vertexProject.length <= 200) clean.vertexProject = patch.vertexProject.trim();
+  if (typeof patch.vertexLocation === 'string' && patch.vertexLocation.length <= 80) clean.vertexLocation = patch.vertexLocation.trim();
+  if (typeof patch.vertexModelCustom === 'string' && patch.vertexModelCustom.length <= 200) clean.vertexModelCustom = patch.vertexModelCustom.trim();
+  if (typeof patch.mcpOAuthClientId === 'string' && patch.mcpOAuthClientId.length <= 200) clean.mcpOAuthClientId = patch.mcpOAuthClientId.trim();
+  if (Number.isFinite(patch.mcpPort) && patch.mcpPort >= 1024 && patch.mcpPort <= 65535) clean.mcpPort = Math.round(patch.mcpPort);
+  if (patch.models && patch.models.vertex && typeof patch.models.vertex === 'object') {
+    const cur = (store.getSettings().models && store.getSettings().models.vertex) || vertex.DEFAULT_MODELS;
+    clean.models = { ...(store.getSettings().models || {}), vertex: { ...cur } };
+    for (const tier of ['smart', 'fast', 'light']) if (typeof patch.models.vertex[tier] === 'string' && patch.models.vertex[tier].length <= 200) clean.models.vertex[tier] = patch.models.vertex[tier].trim();
+  }
   if (typeof patch.channelMessages === 'boolean') clean.channelMessages = patch.channelMessages;
   if (typeof patch.startWithWindows === 'boolean') clean.startWithWindows = patch.startWithWindows;
   // The feed titles the focus guard closes: short words, at most 20, deduplicated.
@@ -290,11 +307,12 @@ function settingsPatch(patch) {
   for (const key of ['micDeviceId', 'micDeviceLabel']) if (typeof patch[key] === 'string' && patch[key].length <= 512) clean[key] = patch[key];
   if (patch.apiKeys && typeof patch.apiKeys === 'object') {
     clean.apiKeys = {};
-    for (const key of ['typesafe','gemini','anthropic','openai','nvidia']) if (typeof patch.apiKeys[key] === 'string' && patch.apiKeys[key].length <= 4096) clean.apiKeys[key] = patch.apiKeys[key].trim();
+    for (const key of ['typesafe','gemini','vertex','anthropic','openai','nvidia','geminiWeb','mcpToken','mcpOAuthClientSecret']) if (typeof patch.apiKeys[key] === 'string' && patch.apiKeys[key].length <= 32768) clean.apiKeys[key] = patch.apiKeys[key].trim();
     // The answer provider follows the key just pasted; a Gemini key wins because
     // it is the free one, an Anthropic key takes over only when no Gemini key exists.
     const current = store.getSettings().apiKeys || {};
     if (clean.apiKeys.gemini) clean.provider = 'gemini';
+    else if (clean.apiKeys.vertex && !current.gemini) clean.provider = 'vertex';
     else if (clean.apiKeys.anthropic && !current.gemini) clean.provider = 'anthropic';
     else if (clean.apiKeys.gemini === '' && (clean.apiKeys.anthropic || current.anthropic) && store.getSettings().provider === 'gemini') clean.provider = 'anthropic';
   }
@@ -338,6 +356,8 @@ async function testKeys(which) {
   const tests = {
     typesafe: () => jev.ready() ? timed(() => jev.systemOne({ state: { ping: 'ping' }, questions: { ok: jev.noul('Is the state a ping?') }, timeoutMs: 4000, retries: 0 })) : { ok: false, ms: 0, error: 'no key' },
     gemini: () => s.apiKeys.gemini ? timed(ping('gemini')) : { ok: false, ms: 0, error: 'no key' },
+    vertex: () => (vertex.resolveCredentials({ storedJson: s.apiKeys.vertex }) ? timed(ping('vertex')) : { ok: false, ms: 0, error: 'no key' }),
+    'gemini-web': () => (s.apiKeys.geminiWeb && s.geminiWebOptIn ? timed(ping('gemini-web')) : { ok: false, ms: 0, error: 'no key' }),
     nvidia: () => s.apiKeys.nvidia ? timed(ping('nvidia')) : { ok: false, ms: 0, error: 'no key' },
     anthropic: () => s.apiKeys.anthropic ? timed(ping('anthropic')) : { ok: false, ms: 0, error: 'no key' },
     cli: async () => (await ai.status()).cli ? timed(() => ai.testConnection()) : { ok: false, ms: 0, error: 'not installed' },
@@ -364,6 +384,54 @@ function handle(channel, fn) {
     return fn(...args);
   });
 }
+
+let mcpServer = null, mcpTunnel = null;
+function ensureMcpToken() {
+  const s = store.getSettings();
+  if (s.apiKeys && s.apiKeys.mcpToken) return s.apiKeys.mcpToken;
+  const tok = generateToken('nus_mcp_');
+  store.setSettings({ apiKeys: { mcpToken: tok } });
+  return tok;
+}
+function getMcpServer() {
+  if (!mcpServer) {
+    mcpServer = createMcpServerManager({
+      getPort: () => store.getSettings().mcpPort || 3847,
+      getBearerToken: () => ensureMcpToken(),
+      getManualClient: () => {
+        const s = store.getSettings();
+        return s.mcpOAuthClientId ? { clientId: s.mcpOAuthClientId, clientSecret: (s.apiKeys && s.apiKeys.mcpOAuthClientSecret) || '', redirectUris: [] } : null;
+      },
+      getPublicOrigin: () => (mcpTunnel && mcpTunnel.status().tunnelUrl) || '',
+      toolDeps: createElectronMcpToolDeps({ electron: require('electron'), app, shell, companion, userData, routinesFile }),
+      log: m => console.log(m),
+    });
+  }
+  return mcpServer;
+}
+function getMcpTunnel() {
+  if (!mcpTunnel) {
+    mcpTunnel = createTunnelManager({
+      isMcpRunning: () => getMcpServer().status().running,
+      hasAuth: () => Boolean(ensureMcpToken()),
+      log: m => console.log(m),
+    });
+  }
+  return mcpTunnel;
+}
+function mcpState() {
+  const s = store.getSettings();
+  return {
+    server: mcpServer ? mcpServer.status() : { running: false, host: '127.0.0.1', port: s.mcpPort || 3847, url: '', tools: [] },
+    tunnel: mcpTunnel ? mcpTunnel.status() : { running: false, starting: false, tunnelUrl: '', mcpUrl: '', error: '' },
+    hasToken: Boolean(s.apiKeys && s.apiKeys.mcpToken),
+    oauthClientId: s.mcpOAuthClientId || '',
+    hasOAuthSecret: Boolean(s.apiKeys && s.apiKeys.mcpOAuthClientSecret),
+    stdioCommand: process.execPath,
+    stdioArgs: app.isPackaged ? ['--mcp-stdio'] : [path.join(__dirname, 'main-companion.js'), '--mcp-stdio'],
+  };
+}
+
 function registerHomeIpc() {
   // The first window paints the stats notice: one step, counted once.
   // Who answers, publik or the person's own key (Settings, Keys). Only in a publik build.
@@ -407,6 +475,52 @@ function registerHomeIpc() {
   handle('home:my-nus', () => { const s = companion.myNus(); stats.hookShown('my_nus'); return s; });
   handle('home:stats:source', source => { stats.sourceAnswer(String(source || 'skipped')); return stats.status(); });
   handle('home:keys:test', which => testKeys(String(which || '')));
+
+  handle('home:vertex:models', async () => {
+    const s = store.getSettings();
+    const creds = vertex.resolveCredentials({ storedJson: s.apiKeys && s.apiKeys.vertex });
+    if (!creds || !creds.credentials) return { ok: false, error: 'No Vertex AI credentials configured.', models: [] };
+    const project = s.vertexProject || creds.credentials.project_id || vertex.DEFAULT_PROJECT;
+    const location = s.vertexLocation || vertex.DEFAULT_LOCATION;
+    const models = await vertex.fetchVertexModels({ credentials: creds.credentials, project, location, fetchImpl: (u, o) => net.fetch(u, o) });
+    return { ok: true, models, project, location, source: creds.source };
+  });
+  handle('home:mcp:status', () => mcpState());
+  handle('home:mcp:start', async () => {
+    ensureMcpToken();
+    await getMcpServer().start();
+    store.setSettings({ mcpEnabled: true });
+    return mcpState();
+  });
+  handle('home:mcp:stop', async () => {
+    if (mcpTunnel) await mcpTunnel.stop();
+    if (mcpServer) await mcpServer.stop();
+    store.setSettings({ mcpEnabled: false });
+    return mcpState();
+  });
+  handle('home:mcp:token:get', () => ({ token: ensureMcpToken() }));
+  handle('home:mcp:token:rotate', () => {
+    const tok = generateToken('nus_mcp_');
+    store.setSettings({ apiKeys: { mcpToken: tok } });
+    return { token: tok };
+  });
+  handle('home:mcp:tunnel:start', async () => {
+    const srv = getMcpServer();
+    if (!srv.status().running) { ensureMcpToken(); await srv.start(); }
+    await getMcpTunnel().start(srv.status().port);
+    return mcpState();
+  });
+  handle('home:mcp:tunnel:stop', async () => {
+    if (mcpTunnel) await mcpTunnel.stop();
+    return mcpState();
+  });
+  handle('home:mcp:oauth:set', ({ clientId, clientSecret } = {}) => {
+    const patch = { mcpOAuthClientId: String(clientId || '').trim() };
+    if (typeof clientSecret === 'string' && clientSecret.trim()) patch.apiKeys = { mcpOAuthClientSecret: clientSecret.trim() };
+    store.setSettings(patch);
+    return mcpState();
+  });
+
   // Feedback page: the person's words, a kind, and an optional reply address,
   // sent (or queued) on Send. Nothing else from the app rides along.
   handle('home:feedback:send', p => feedback.submit({ message: String((p && p.message) || ''), kind: String((p && p.kind) || 'other'), email: String((p && p.email) || ''), collector: 'home' }));
@@ -541,7 +655,7 @@ app.on('will-quit', event => {
   if (quitFlushed) return;
   quitFlushed = true;
   event.preventDefault();
-  stats.stop().catch(() => {}).finally(() => app.exit(0));
+  Promise.allSettled([mcpTunnel ? mcpTunnel.stop() : Promise.resolve(), mcpServer ? mcpServer.stop() : Promise.resolve(), stats.stop()]).finally(() => app.exit(0));
 });
 app.on('window-all-closed', () => {});
 app.on('activate', () => { if (databaseReady) openHome(); });

@@ -202,7 +202,7 @@
   async function settings() {
     const [s,status,intents] = await Promise.all([api.settingsGet(),api.status(),api.intents()]);
     paintStatus(status);
-    for(const key of ['typesafe','gemini','nvidia','anthropic']) {
+    for(const key of ['typesafe','gemini','vertex','nvidia','anthropic','geminiWeb']) {
       const set=key==='typesafe' ? status.reflex.key : s.keys[key];
       $('#'+key+'-state').textContent=set ? 'Set'+(key==='typesafe'?' · '+status.reflex.keySource:'') : 'Not set';
       $('#'+key+'-state').classList.toggle('set',!!set);
@@ -212,10 +212,10 @@
     const pub=status.publik||{on:false},viaPublik=!!(pub.on&&pub.choice==='publik');$('#publik-row').hidden=!pub.on;$('#use-own-key').checked=!viaPublik;paintPublikAccount(pub);
     // Voice commands run on the built-in rules with no key (src/reflex/rules.js), so this step is
     // never "Not set". A saved TypeSafe key is named beside it; it is optional.
-    const answersOk=!!(viaPublik||s.keys.gemini||s.keys.nvidia||s.keys.anthropic||status.ai.cli);
+    const answersOk=!!(viaPublik||s.keys.gemini||s.keys.vertex||s.keys.nvidia||s.keys.anthropic||status.ai.cli);
     $('#step-voice').textContent=status.reflex.key?'Ready · TypeSafe':'Ready';$('#step-voice').classList.add('set');
     $('#typesafe-state').textContent=status.reflex.key?'Set · '+status.reflex.keySource:'Optional';
-    $('#step-answers').textContent=answersOk?'Ready'+(viaPublik?' · publik':s.keys.gemini?' · Gemini':s.keys.anthropic?' · Anthropic':s.keys.nvidia?' · Nvidia':' · Claude Code'):'Not set';$('#step-answers').classList.toggle('set',answersOk);
+    $('#step-answers').textContent=answersOk?'Ready'+(viaPublik?' · publik':s.keys.gemini?' · Gemini':s.keys.vertex?' · Vertex AI':s.keys.anthropic?' · Anthropic':s.keys.nvidia?' · Nvidia':' · Claude Code'):'Not set';$('#step-answers').classList.toggle('set',answersOk);
     $('#voice-status').textContent='Whisper engine: '+(status.voice.whisper?'found':'missing')+' · Speech model: '+(status.voice.model?'found':'missing');
     $('#ptt-live').textContent=chord(status.ptt.accelerator);
     $('#ptt-input').placeholder=chord(status.ptt.accelerator);
@@ -334,18 +334,18 @@
   $('#tutorial').onclick=()=>run(()=>api.control('tutorial'));
   $('#capture-toggle').onclick=e=>run(async()=>paintStatus(await api.control('capture')),e.currentTarget);
   $('#key-form').onsubmit=e=>{e.preventDefault();run(async()=>{
-    const keys={};for(const k of ['typesafe','gemini','nvidia','anthropic']){const input=$('#key-'+k+'-home');if(input.value.trim())keys[k]=input.value.trim();}
+    const keys={};for(const k of ['typesafe','gemini','vertex','nvidia','anthropic','geminiWeb']){const input=$('#key-'+k+'-home');if(input&&input.value.trim())keys[k]=input.value.trim();}
     if(Object.keys(keys).length)await api.settingsSet({apiKeys:keys});
-    for(const k of ['typesafe','gemini','nvidia','anthropic'])$('#key-'+k+'-home').value='';
+    for(const k of ['typesafe','gemini','nvidia','anthropic'])$('#key-'+k+'-home').value='';for(const k of ['vertex','geminiWeb']){const el=$('#key-'+k+'-home');if(el)el.value='';}
     await settings();notice(Object.keys(keys).length?'Keys saved. Checking them now.':'Nothing to save.');
     // A bad key is caught at entry, not on the next ask.
     for(const k of Object.keys(keys))await testKey(k);
   },e.submitter);};
   $$('[data-clear]').forEach(b=>b.onclick=()=>run(async()=>{await api.settingsSet({apiKeys:{[b.dataset.clear]:''}});await settings();notice(b.dataset.clear==='typesafe'?'Saved TypeSafe key cleared. An environment key, if present, still takes priority.':'Saved key cleared.');},b));
   // Test buttons: one round trip per key, the result lands on that row's badge.
-  const testLabels={typesafe:'Voice',gemini:'Gemini',nvidia:'Nvidia',anthropic:'Anthropic',cli:'Claude Code'};
+  const testLabels={typesafe:'Voice',gemini:'Gemini',vertex:'Vertex AI','gemini-web':'Gemini Web',nvidia:'Nvidia',anthropic:'Anthropic',cli:'Claude Code'};
   async function testKey(which){
-    const badge=$('#'+(which==='cli'?'cli-state':which+'-state'));
+    const badge=$('#'+(which==='cli'?'cli-state':which==='gemini-web'?'geminiWeb-state':which+'-state'));
     // The note sits directly under the row it is about.
     $('[data-test="'+which+'"]').closest('.key-row').after($('#test-note'));
     badge.textContent='Testing…';badge.classList.remove('ok','bad');$('#test-note').textContent='';
@@ -358,11 +358,108 @@
   // Test on a freshly pasted key saves it first. Before, Test read only the saved
   // key, so a pasted but unsaved one showed "Not set" (feedback 209 and 246).
   async function saveTyped(which){
-    const input=$('#key-'+which+'-home');const v=input&&input.value.trim();
+    const key=which==='gemini-web'?'geminiWeb':which;const input=$('#key-'+key+'-home');const v=input&&input.value.trim();
     if(!v)return;
-    await api.settingsSet({apiKeys:{[which]:v}});input.value='';await settings();
+    if(which==='gemini-web'){await api.settingsSet({apiKeys:{geminiWeb:v}});}else{await api.settingsSet({apiKeys:{[which]:v}});}
+    input.value='';await settings();
   }
   $$('[data-test]').forEach(b=>b.onclick=()=>run(async()=>{await saveTyped(b.dataset.test);await testKey(b.dataset.test);},b));
+
+  // Vertex AI project, location, live models & Gemini Web opt-in
+  function syncVertexFields(s){
+    if($('#vertex-project'))$('#vertex-project').value=s.vertexProject||'gen-lang-client-0384437564';
+    if($('#vertex-location'))$('#vertex-location').value=s.vertexLocation||'global';
+    if($('#vertex-model-custom'))$('#vertex-model-custom').value=s.vertexModelCustom||'';
+    if($('#gemini-web-optin'))$('#gemini-web-optin').checked=!!s.geminiWebOptIn;
+  }
+  api.settingsGet().then(syncVertexFields).catch(()=>{});
+  ['#vertex-project','#vertex-location','#vertex-model-custom'].forEach(sel=>{
+    const el=$(sel);if(!el)return;
+    el.onchange=()=>run(async()=>{
+      const p={vertexProject:$('#vertex-project').value.trim()||'gen-lang-client-0384437564',vertexLocation:$('#vertex-location').value.trim()||'global',vertexModelCustom:$('#vertex-model-custom').value.trim()};
+      syncVertexFields(await api.settingsSet(p));
+    },el);
+  });
+  if($('#gemini-web-optin')){
+    $('#gemini-web-optin').onchange=e=>run(()=>api.settingsSet({geminiWebOptIn:e.target.checked}),e.target);
+  }
+  if($('#vertex-refresh-models')){
+    $('#vertex-refresh-models').onclick=e=>run(async()=>{
+      $('#vertex-models-note').textContent='Fetching live models from Vertex...';
+      const r=await api.vertexModels();
+      if(!r||!r.ok){$('#vertex-models-note').textContent=(r&&r.error)||'Failed to load Vertex models.';return;}
+      const fill=(sel,models,fallback)=>{
+        const el=$(sel);if(!el)return;const cur=el.value||fallback;
+        el.innerHTML='';
+        for(const m of models){const o=document.createElement('option');o.value=m.id;o.textContent=(m.displayName||m.id)+' ('+m.id+')';el.appendChild(o);}
+        if(cur&&!models.some(m=>m.id===cur)){const o=document.createElement('option');o.value=cur;o.textContent=cur;el.appendChild(o);}
+        el.value=cur;
+      };
+      fill('#vertex-model-smart',r.models,'gemini-4-hydrogen');
+      fill('#vertex-model-fast',r.models,'gemini-3.8-flash');
+      fill('#vertex-model-light',r.models,'gemini-3.5-flash-lite');
+      $('#vertex-models-note').textContent='Loaded '+r.models.length+' live models from '+r.project+' ('+r.location+').';
+    },e.currentTarget);
+  }
+  ['smart','fast','light'].forEach(tier=>{
+    const el=$('#vertex-model-'+tier);if(!el)return;
+    el.onchange=()=>run(()=>api.settingsSet({models:{vertex:{[tier]:el.value}}}),el);
+  });
+
+  // MCP Server & Cloudflare Quick Tunnel
+  function paintMcp(st){
+    if(!st||!$('#mcp-state-badge'))return;
+    const srv=st.server||{};const tun=st.tunnel||{};
+    $('#mcp-state-badge').textContent=srv.running?'Running':'Stopped';
+    $('#mcp-state-badge').classList.toggle('ok',!!srv.running);
+    $('#mcp-toggle').textContent=srv.running?'Stop MCP Server':'Start MCP Server';
+    $('#mcp-local-url').textContent=srv.running?'Local Streamable HTTP: '+srv.url:'Localhost only (127.0.0.1:'+(srv.port||3847)+'/mcp), off by default.';
+    $('#mcp-tunnel-toggle').textContent=tun.running?'Stop Cloudflare Tunnel':'Start Cloudflare Tunnel';
+    $('#mcp-copy-tunnel').hidden=!tun.mcpUrl;
+    $('#mcp-tunnel-url').textContent=tun.mcpUrl?'Developer Mode URL: '+tun.mcpUrl:(tun.error||'');
+    if($('#mcp-oauth-client-id'))$('#mcp-oauth-client-id').value=st.oauthClientId||'';
+    if($('#mcp-stdio-cmd'))$('#mcp-stdio-cmd').textContent='Command: '+st.stdioCommand+' '+(st.stdioArgs||[]).join(' ')+' (set NUS_MCP_TOKEN env var to your Bearer token)';
+  }
+  if(api.mcpStatus){api.mcpStatus().then(paintMcp).catch(()=>{});}
+  if($('#mcp-toggle')){
+    $('#mcp-toggle').onclick=e=>run(async()=>{
+      const cur=await api.mcpStatus();
+      paintMcp(cur.server&&cur.server.running?await api.mcpStop():await api.mcpStart());
+    },e.currentTarget);
+  }
+  if($('#mcp-copy-token')){
+    $('#mcp-copy-token').onclick=e=>run(async()=>{
+      const r=await api.mcpTokenGet();
+      await navigator.clipboard.writeText(r.token||'');
+      $('#mcp-note').textContent='Bearer token copied to clipboard.';
+    },e.currentTarget);
+  }
+  if($('#mcp-rotate-token')){
+    $('#mcp-rotate-token').onclick=e=>run(async()=>{
+      await api.mcpTokenRotate();
+      $('#mcp-note').textContent='Bearer token rotated.';
+    },e.currentTarget);
+  }
+  if($('#mcp-tunnel-toggle')){
+    $('#mcp-tunnel-toggle').onclick=e=>run(async()=>{
+      const cur=await api.mcpStatus();
+      paintMcp(cur.tunnel&&cur.tunnel.running?await api.mcpTunnelStop():await api.mcpTunnelStart());
+    },e.currentTarget);
+  }
+  if($('#mcp-copy-tunnel')){
+    $('#mcp-copy-tunnel').onclick=e=>run(async()=>{
+      const cur=await api.mcpStatus();
+      if(cur.tunnel&&cur.tunnel.mcpUrl){await navigator.clipboard.writeText(cur.tunnel.mcpUrl);$('#mcp-note').textContent='HTTPS /mcp URL copied.';}
+    },e.currentTarget);
+  }
+  if($('#mcp-oauth-save')){
+    $('#mcp-oauth-save').onclick=e=>run(async()=>{
+      paintMcp(await api.mcpOAuthSet({clientId:$('#mcp-oauth-client-id').value,clientSecret:$('#mcp-oauth-client-secret').value}));
+      $('#mcp-oauth-client-secret').value='';
+      $('#mcp-note').textContent='OAuth client saved.';
+    },e.currentTarget);
+  }
+
   // -------- Get started: the tour (companion/src/tour.js, run by the Knot) --------
   // One card. The tour itself runs on the overlay, over the person's screen.
   function paintStartNav(st){$('#tour-card').hidden=!(st&&(st.show||st.running));}

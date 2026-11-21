@@ -1,0 +1,49 @@
+name: CI and Windows Installer
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
+      - run: npm test
+
+  build-windows:
+    name: Build Windows Installer (.exe)
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
+      - name: Fetch voice and embedding models
+        run: |
+          npm run setup:voice
+          npm run setup:embed
+      - name: Build Windows NSIS Installer & Portable EXE
+        run: npm run dist:companion
+      - name: Run package security check
+        run: npm run dist:check:companion
+      - name: Upload Windows Installer Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nus-companion-windows-installer
+          path: |
+            dist-companion/Nus-Companion-Setup.exe
+            dist-companion/Nus-Companion-Portable.exe
+          if-no-files-found: error

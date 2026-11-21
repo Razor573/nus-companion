@@ -1,5 +1,5 @@
 const DEBUG = false; // Set to false to disable debug logging
-// LLM factory: OpenAI / Anthropic / Gemini behind one streaming interface.
+// LLM factory: OpenAI / Anthropic / Gemini / Vertex AI / opt-in Gemini Web behind one streaming interface.
 // stream({ system, turns:[{role,text}], imageDataUrl, maxTokens, onToken }) -> Promise<fullText>
 
 function stripDataUrl(dataUrl) {
@@ -211,6 +211,8 @@ let publik = null;
 try { publik = require('./publik'); } catch (_) { publik = null; }
 // On a Mac each request's instructions also say it is a Mac (companion/src/computer-words.js).
 const { paramsWithComputer } = require('./computer-words');
+const vertex = require('./vertex');
+const geminiWeb = require('./gemini-web');
 
 // Normal publik streams send their tokens within milliseconds of each other
 // (about 35 chunks in 0.5 s); 2.5 s of silence after text is a stall, not a pause.
@@ -237,19 +239,44 @@ function createLLM(settings) {
   if (!envClaude && publik && publik.active()) return publikLLM()(settings);
   const provider = envClaude ? 'anthropic' : settings.provider;
   const keys = settings.apiKeys || {};
+  const tier = settings.tier === 'light' ? 'light' : (settings.smart ? 'smart' : 'fast');
+  const vertexModels = { ...vertex.DEFAULT_MODELS, ...((settings.models && settings.models.vertex) || {}) };
+  const vertexCreds = provider === 'vertex' ? vertex.resolveCredentials({ storedJson: keys.vertex }) : null;
+  const vertexProject = (settings.vertexProject && String(settings.vertexProject).trim()) || (vertexCreds && vertexCreds.credentials && vertexCreds.credentials.project_id) || vertex.DEFAULT_PROJECT;
+  const vertexLocation = (settings.vertexLocation && String(settings.vertexLocation).trim()) || vertex.DEFAULT_LOCATION;
+
   const apiKey = envClaude ? process.env.ANTHROPIC_API_KEY : keys[provider];
-  const tier = settings.smart ? 'smart' : 'fast';
-  const model = envClaude ? (process.env.NUS_COMPANION_CLAUDE_MODEL || 'claude-sonnet-5') : (settings.models[provider] || {})[tier];
+  const model = envClaude
+    ? (process.env.NUS_COMPANION_CLAUDE_MODEL || 'claude-sonnet-5')
+    : provider === 'vertex'
+      ? ((settings.vertexModelCustom && String(settings.vertexModelCustom).trim()) || vertexModels[tier] || vertexModels.fast)
+      : provider === 'gemini-web'
+        ? 'gemini-web-temp'
+        : ((settings.models && settings.models[provider]) || {})[tier];
 
   // Set to 4096 (effectively unlimited for a single response) 
   // since some SDKs like Anthropic require a maxTokens value.
   const maxTokens = 4096;
+  const isGeminiWebReady = provider === 'gemini-web' && settings.geminiWebOptIn === true && !!keys.geminiWeb;
+  const isVertexReady = provider === 'vertex' && !!(vertexCreds && vertexCreds.credentials) && !!model;
+  const ready = provider === 'vertex' ? isVertexReady : provider === 'gemini-web' ? isGeminiWebReady : (!!apiKey && !!model);
 
-  if (DEBUG) console.log('[DEBUG LLM] createLLM initialized:', { provider, model, isKeyPresent: !!apiKey, ready: !!apiKey && !!model });
+  if (DEBUG) console.log('[DEBUG LLM] createLLM initialized:', { provider, model, isKeyPresent: !!apiKey, ready });
+
+  async function fallbackFromWeb(method, params) {
+    const vCreds = vertex.resolveCredentials({ storedJson: keys.vertex });
+    if (vCreds && vCreds.credentials) {
+      return createLLM({ ...settings, provider: 'vertex' })[method](params);
+    }
+    if (keys.gemini) {
+      return createLLM({ ...settings, provider: 'gemini' })[method](params);
+    }
+    return null;
+  }
 
   return {
     provider, model, apiKey,
-    ready: !!apiKey && !!model,
+    ready,
     async stream(params) {
       if (DEBUG) console.log('[DEBUG LLM] stream() invoked for provider:', provider);
       const args = { apiKey, model, maxTokens, ...paramsWithComputer(params) };
@@ -257,6 +284,20 @@ function createLLM(settings) {
       if (provider === 'nvidia') return streamOpenAI({ ...args, baseURL: 'https://integrate.api.nvidia.com/v1' });
       if (provider === 'anthropic') return streamAnthropic(args);
       if (provider === 'gemini') return streamGemini(args);
+      if (provider === 'vertex') {
+        if (!vertexCreds || !vertexCreds.credentials) throw new Error('Vertex AI credentials are not configured.');
+        return vertex.streamVertex({ ...args, credentials: vertexCreds.credentials, project: vertexProject, location: vertexLocation });
+      }
+      if (provider === 'gemini-web') {
+        if (!settings.geminiWebOptIn) throw new Error('Gemini web is opt-in only. Enable it in Settings > Keys.');
+        try {
+          return await geminiWeb.callGeminiWeb({ psid: keys.geminiWeb, ...args });
+        } catch (err) {
+          const fb = await fallbackFromWeb('stream', params);
+          if (fb !== null) return fb;
+          throw err;
+        }
+      }
       throw new Error('unknown provider: ' + provider);
     },
     async complete(params) {
@@ -265,6 +306,20 @@ function createLLM(settings) {
       // params.onDelta: streamed text for callers that can use it as it arrives.
       const args = { apiKey, maxTokens: params.maxTokens || 512, ...paramsWithComputer(params), model: params.model || model, onToken: params.onToken || params.onDelta || (() => {}) };
       if (provider === 'gemini') return completeGemini(args);
+      if (provider === 'vertex') {
+        if (!vertexCreds || !vertexCreds.credentials) throw new Error('Vertex AI credentials are not configured.');
+        return vertex.completeVertex({ ...args, credentials: vertexCreds.credentials, project: vertexProject, location: vertexLocation });
+      }
+      if (provider === 'gemini-web') {
+        if (!settings.geminiWebOptIn) throw new Error('Gemini web is opt-in only. Enable it in Settings > Keys.');
+        try {
+          return await geminiWeb.callGeminiWeb({ psid: keys.geminiWeb, ...args });
+        } catch (err) {
+          const fb = await fallbackFromWeb('complete', params);
+          if (fb !== null) return fb;
+          throw err;
+        }
+      }
       // The other SDKs stream fine; collect and return.
       if (provider === 'openai') return streamOpenAI(args);
       if (provider === 'nvidia') return streamOpenAI({ ...args, baseURL: 'https://integrate.api.nvidia.com/v1' });
