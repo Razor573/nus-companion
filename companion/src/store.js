@@ -119,12 +119,20 @@ const DEFAULTS = {
   // it off from the desktop Knot pane is the only thing that removes it, and
   // that choice persists until the user turns it back on.
   companionEnabled: true,
-  apiKeys: { openai: '', anthropic: '', gemini: '', nvidia: '', typesafe: '' },
+  apiKeys: { openai: '', anthropic: '', gemini: '', vertex: '', nvidia: '', typesafe: '', geminiWeb: '', mcpToken: '', mcpOAuthClientSecret: '' },
+  vertexProject: 'gen-lang-client-0384437564',
+  vertexLocation: 'global',
+  vertexModelCustom: '',
+  geminiWebOptIn: false,
+  mcpEnabled: false,
+  mcpPort: 3847,
+  mcpOAuthClientId: '',
   models: {
     openai: { fast: 'gpt-4o-mini', smart: 'gpt-4o' },
     anthropic: { fast: 'claude-haiku-4-5', smart: 'claude-sonnet-5' },
     // 2026-09-15: gemini-2.5-* returns 404 "no longer available to new users".
     gemini: { fast: 'gemini-3.6-flash', smart: 'gemini-3.6-pro' },
+    vertex: { smart: 'gemini-4-hydrogen', fast: 'gemini-3.8-flash', light: 'gemini-3.5-flash-lite' },
     // 2026-11-13 (feedback): Nvidia removed meta/llama-3.2-11b-vision-instruct, so every ask on an
     // Nvidia key failed. Its model list on 2026-11-15 still has the 90b vision model; both tiers use it.
     nvidia: { fast: 'meta/llama-3.2-90b-vision-instruct', smart: 'meta/llama-3.2-90b-vision-instruct' }
@@ -277,7 +285,7 @@ function load() {
 // Also run on every save, so a key pasted in Home answers without a restart.
 function pickKeyedProvider(d) {
   if (d.apiKeys[d.provider]) return;
-  const validProviders = ['openai', 'anthropic', 'gemini', 'nvidia'];
+  const validProviders = ['openai', 'anthropic', 'gemini', 'vertex', 'nvidia'];
   const active = validProviders.find(p => d.apiKeys[p]);
   if (active) d.provider = active;
 }
